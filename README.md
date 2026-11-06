@@ -49,12 +49,19 @@
 
 ### B. 免费云平台（以 Render 为例）
 
-1. 把 `D:\VSCode\zhajinhua` 整个目录推到 GitHub 私有仓库（`data/rooms.json` 会被 `.gitignore` 忽略）。
-2. 打开 [render.com](https://render.com) → New → **Web Service** → 连你的仓库。
-3. 设置：Runtime = `Node`，Build Command 留空，Start Command = `node server.js`。
-4. 部署完拿到 `https://xxx.onrender.com`，发这个链接就行。
+1. 把 `D:\VSCode\zhajinhua` 整个目录推到 GitHub 私有仓库（`data/` 下的口令和房间数据会被 `.gitignore` 忽略）。
+2. 打开 [render.com](https://render.com) 用 GitHub 账号注册/登录（免费）。
+3. 直接点一键部署（会自动读取仓库根目录的 `render.yaml`）：
+   `https://render.com/deploy?repo=https://github.com/<你的用户名>/zhajinhua`
+4. 按提示填一次环境变量 `CREATE_PIN`（创建房间口令），点 Apply。
+5. 等 2~3 分钟构建完成，拿到 `https://xxx.onrender.com`，发这个链接就行。
 
-注意：Render 免费实例 15 分钟无流量会休眠，**正在打牌时因为有 SSE 长连接不会休眠**，但开局前第一次打开可能要等半分钟。
+> 手动方式：New → Web Service → 连仓库 → Runtime `Node`、Start Command `node server.js`，
+> 再到 Environment 里加 `CREATE_PIN=你的口令`（可选）。
+>
+> 口令通过环境变量 `CREATE_PIN` 下发，**不要**把口令写进 `data/settings.json` 一起提交。
+
+注意：Render 免费实例 15 分钟无流量会休眠，**正在打牌时因为有 SSE 长连接不会休眠**，但开局前第一次打开可能要等半分钟。云上磁盘是临时的，`data/rooms.json` 不会跨重启保留，房间在内存里，重启后需要重新开房（积分本就是按会话算的）。
 
 ### C. 自己的服务器（Linux）
 
@@ -172,7 +179,8 @@ zhajinhua/
 │   ├── share-ssh.ps1      公网穿透（用系统自带 ssh，零下载）
 │   ├── share-tunnel.ps1   公网穿透备选方案（cloudflared，需要放行下载的 exe）
 │   └── ui-check.js        无头浏览器自测：375px 手机视口真跑一局并截图
-├── deploy/                Dockerfile / render.yaml
+├── render.yaml            Render 一键部署配置（在仓库根目录）
+├── deploy/Dockerfile      自建服务器用的 Docker 镜像
 ├── data/rooms.json        运行态落盘（自动生成）
 ├── start.bat              一键启动
 └── share.bat              一键生成公网地址
