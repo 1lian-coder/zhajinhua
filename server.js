@@ -388,6 +388,37 @@ const api = {
     return { ok: true, roomId: room.id, playerId: player.id, token: player.token };
   },
 
+  /** 房主添加人机（大厅/结算阶段） */
+  async addBot(body) {
+    const { room, player } = authPlayer(body);
+    if (room.hostId !== player.id) throw userError('只有房主可以添加人机');
+    if (room.phase === 'playing') throw userError('牌局进行中不能添加人机，等本局结束');
+    const bot = room.addBot(body.name);
+    markDirty();
+    broadcast(room);
+    return { ok: true, playerId: bot.id, name: bot.name, isBot: true };
+  },
+
+  /** 房主移除人机（大厅/结算阶段） */
+  async removeBot(body) {
+    const { room, player } = authPlayer(body);
+    if (room.hostId !== player.id) throw userError('只有房主可以移除人机');
+    if (room.phase === 'playing') throw userError('牌局进行中不能移除人机，等本局结束');
+    const target = room.getPlayer(String(body.target || ''));
+    if (!target || !target.isBot) throw userError('只能移除人机玩家');
+    const name = target.name;
+    room.removePlayer(target.id);
+    room.log(`房主移除了人机 ${name}`);
+    markDirty();
+    if (room.players.size === 0) {
+      rooms.delete(room.id);
+      streams.delete(room.id);
+    } else {
+      broadcast(room);
+    }
+    return { ok: true };
+  },
+
   async rejoin(body) {
     const { room, player } = authPlayer(body);
     player.connected = true;
@@ -630,6 +661,10 @@ const tickTimer = setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     try {
+      if (room.botTick(now)) {
+        broadcast(room);
+        continue;
+      }
       if (room.tick(now)) broadcast(room);
     } catch (e) {
       console.error('[tick] 房间', room.id, '异常:', e.message);

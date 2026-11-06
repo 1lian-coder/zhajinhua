@@ -125,6 +125,20 @@
         </div>
       </div>
 
+      <!-- 大厅：人机玩家管理 -->
+      <section id="panel-bots" class="panel" hidden>
+        <div class="panel-head">
+          <h2>人机玩家</h2>
+          <span id="bots-hint" class="muted">一个人也能玩</span>
+        </div>
+        <div id="bots-list" class="bots-list"></div>
+        <div class="panel-actions">
+          <button id="btn-add-bot" class="btn btn-primary" type="button">+ 添加人机</button>
+          <span id="bots-count" class="muted"></span>
+        </div>
+        <p class="tips">人机在服务端自动出牌（看牌/跟注/加注/比牌都会），你断线它照打。最多凑满 6 个座位。</p>
+      </section>
+
       <!-- 大厅：房间设置 -->
       <section id="panel-lobby" class="panel" hidden>
         <div class="panel-head">

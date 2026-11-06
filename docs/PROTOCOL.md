@@ -60,6 +60,19 @@ SSE 长连接。事件类型：
 | `fold` | `{}` | 弃牌 |
 | `compare` | `{ "target": "p2" }` | 约比牌，付 `cost`，输的人出局 |
 
+### POST /api/addBot
+房主添加人机玩家（仅 lobby / showdown 阶段）。人机由服务端 `botTick` 驱动自动出牌。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"a1b2...", "name":"人机·阿福" }
+```
+`name` 可省略（自动从名单挑）。返回 `{ok:true, playerId:"p3", name:"人机·阿福", isBot:true}`。
+
+### POST /api/removeBot
+房主移除人机（仅 lobby / showdown 阶段）。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"a1b2...", "target":"p3" }
+```
+
 ### POST /api/look
 专门用于看牌，**不校验是否轮到你**（看牌不消耗回合）。`{ roomId, playerId, token }`
 等价于 `POST /api/action` 且 `action="look"`；两者行为一致。
@@ -106,7 +119,8 @@ SSE 长连接。事件类型：
       "inHand": true,                  // 是否在本局中
       "folded": false,                 // 是否已弃牌
       "seen": true,                    // 是否已看牌（公开信息）
-      "connected": true,               // 是否在线
+      "connected": true,               // 是否在线（人机恒为 true）
+      "isBot": false,                 // 是否人机玩家
       "isHost": true,
       "isDealer": false,
       "isTurn": false,

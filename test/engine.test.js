@@ -17,6 +17,7 @@ const {
   TYPE
 } = require('../lib/cards');
 const { Room } = require('../lib/engine');
+const { BOT_NAMES, handScore, decideBotAction } = require('../lib/bot');
 
 // ---------------------------------------------------------------- 工具
 
@@ -479,4 +480,84 @@ test('落盘再恢复：进行中的牌局作废并原额退注，账目保持�
   restored.startHand(restored.order[0]);
   assert.strictEqual(restored.phase, 'playing');
   assert.strictEqual(restored.pot, QUIET.ante * 3);
+});
+
+// ---------------------------------------------------------------- 人机玩家
+
+test('人机：单个真人 + 人机即可开局，人机自动出牌打完整局', () => {
+  const room = new Room('000111', { ...QUIET, maxPot: 400 });
+  const me = room.addPlayer('独狼');
+  room.addBot();
+  room.addBot();
+
+  assert.strictEqual(room.players.size, 3);
+  assert.strictEqual(room.hostId, me.id, '人机不能当房主');
+
+  room.startHand(me.id);
+  let guard = 0;
+  while (room.phase === 'playing' && guard++ < 300) {
+    if (room.turnId === me.id) {
+      // 真人开局就弃牌，把牌局留给两个人机互打（验证纯人机对局推进）
+      room.act(me.id, 'fold', {});
+    } else {
+      // 测试加速：清零延迟，模拟"思考时间已到"（botTick 每次动作后会随机化延迟）
+      const p = room.players.get(room.turnId);
+      if (p && p.isBot) p.botDelay = 0;
+      room.botTick(Date.now());
+    }
+  }
+
+  assert.strictEqual(room.phase, 'showdown', `guard=${guard} 后应结算`);
+  assert.strictEqual(room.pot, 0);
+  assert.ok(room.lastResult && room.lastResult.winners.length > 0);
+  const netSum = [...room.players.values()].reduce((a, p) => a + p.net, 0);
+  assert.strictEqual(netSum, 0, '含人机账目也必须零和');
+  for (const p of room.players.values()) {
+    assert.ok(p.chips >= 0, `${p.name} 筹码为负`);
+  }
+});
+
+test('人机：决策函数覆盖强弱牌路径，且落盘恢复后人机身份保留', () => {
+  // 开局让 activeInHand 非空，决策才有意义
+  const room = new Room('000112', QUIET);
+  const me = room.addPlayer('裁判');
+  const bot = room.addBot();
+  room.addBot();
+  room.startHand(me.id);
+  room.stake = QUIET.baseStake;
+  room.pot = 100;
+
+  // 强牌（豹子）只会加注/跟注/比牌，不会弃牌
+  bot.cards = [card('S', 14), card('H', 14), card('D', 14)];
+  bot.seen = true;
+
+  let foldedStrong = 0;
+  for (let i = 0; i < 60; i++) {
+    const d = decideBotAction(room, bot, () => (i % 10) / 10);
+    if (d.action === 'fold') foldedStrong++;
+    void d;
+  }
+  assert.strictEqual(foldedStrong, 0, '豹子不应弃牌');
+
+  // 弱牌在高注下大概率弃牌
+  bot.cards = [card('S', 3), card('H', 7), card('D', 9)]; // 单张 9 高
+  room.stake = QUIET.maxStake; // 单注顶格
+  room.pot = 2000; // 池子很大
+  let folds = 0;
+  for (let i = 0; i < 100; i++) {
+    const d = decideBotAction(room, bot, () => (i % 100) / 100);
+    if (d.action === 'fold') folds++;
+  }
+  assert.ok(folds >= 60, `弱牌高注应多数弃牌（实际 ${folds}/100）`);
+
+  // 落盘恢复：人机身份、在场状态保留
+  room.abortHand('测试');
+  const raw = JSON.parse(JSON.stringify(room.toJSON()));
+  const restored = Room.fromJSON(raw);
+  const rb = [...restored.players.values()].find((p) => p.isBot);
+  assert.ok(rb, '恢复后人机仍在');
+  assert.strictEqual(rb.connected, true, '人机恢复后恒在线');
+  assert.ok(BOT_NAMES.includes(rb.name) || rb.name.startsWith('人机'));
+  assert.strictEqual(restored.hostId, me.id, '恢复后房主仍是真人');
+  void handScore;
 });

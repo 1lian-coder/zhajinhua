@@ -1583,6 +1583,47 @@ input {
   }
 }
 
+/* ==================== 人机玩家 ==================== */
+
+.badge.bot {
+  color: #9fc4ff;
+  background: rgba(120, 170, 255, .16);
+  border-color: rgba(120, 170, 255, .4);
+}
+
+.seat .seat-name.bot-name {
+  color: #cfe2ff;
+}
+
+.bots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+.bot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(120, 170, 255, .07);
+  border: 1px solid rgba(120, 170, 255, .18);
+}
+
+.bot-name {
+  font-size: 14px;
+  color: #cfe2ff;
+}
+
+.btn-small {
+  min-width: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
 /* ==================== 加载/连通性兜底提示 ==================== */
 
 .dead-banner {

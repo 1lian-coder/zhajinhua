@@ -315,12 +315,51 @@ async function main() {
   }
   console.log(`✓ ${bots.length} 个机器人已加入`);
 
+  // ---- 人机面板：真实点击"添加人机"按钮，验证 UI 与徽标 ----
+  {
+    const added = await cdp.eval(`(() => {
+      const panel = document.getElementById('panel-bots');
+      if (!panel || panel.hidden) return 'panel-hidden';
+      const btn = document.getElementById('btn-add-bot');
+      if (!btn) return 'no-btn';
+      if (btn.disabled) return 'btn-disabled';
+      btn.click();
+      return 'clicked';
+    })()`);
+    await sleep(900);
+    const botState = await cdp.eval(`(() => {
+      const seats = [...document.querySelectorAll('.seat')];
+      const botSeats = seats.filter(s => s.textContent.includes('人机'));
+      const panel = document.getElementById('panel-bots');
+      const rows = [...(document.querySelectorAll('#bots-list .bot-row') || [])];
+      return JSON.stringify({
+        panelHidden: panel ? panel.hidden : null,
+        botSeatCount: botSeats.length,
+        botRows: rows.length,
+        hasRemoveBtn: !!document.querySelector('#bots-list .bot-row button')
+      });
+    })()`);
+    const bs = JSON.parse(botState);
+    if (added !== 'clicked') {
+      console.log(`  (人机面板点击异常: ${added}，继续用 HTTP 机器人)`);
+    } else {
+      const okUI = bs.botSeatCount >= 1 && bs.botRows >= 1;
+      console.log(
+        okUI
+          ? `✓ 人机面板可用：点添加后出现 ${bs.botSeatCount} 个人机座位、${bs.botRows} 行管理列表${bs.hasRemoveBtn ? '、可移除' : ''}`
+          : `✗ 人机 UI 异常: ${botState}`
+      );
+      if (!okUI) throw new Error('人机 UI 渲染异常: ' + botState);
+      await shot('02b-bot-added');
+    }
+  }
+
   // 把封顶调小，让它尽快开牌，方便看到结算界面
   const cfg = await post('/api/config', {
     roomId,
     playerId: hostSession.playerId,
     token: hostSession.token,
-    config: { ante: 10, baseStake: 10, maxStake: 100, maxPot: 120 + 60 * bots.length, seeMultiplier: 2, turnSeconds: 0 }
+    config: { ante: 10, baseStake: 10, maxStake: 100, maxPot: 120 + 60 * bots.length + 120, seeMultiplier: 2, turnSeconds: 0 }
   });
   if (!cfg.ok) console.log('  (配置调整失败，用默认值继续)');
   else console.log('✓ 已把总注封顶调到 300，便于快速开牌');

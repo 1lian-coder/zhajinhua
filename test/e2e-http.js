@@ -218,6 +218,73 @@ async function main() {
   if (badPin.ok) throw new Error('错口令竟然能建房');
   console.log('✓ 无口令/错口令建房被拒（code=' + noPin.code + '）');
 
+  // 7) 单人 + 人机：放在最前面跑（后面的限频/房间上限测试会占掉创建额度）
+  {
+    const solo = await post('/api/create', { name: '独狼玩家', pin: '2468' });
+    if (!solo.ok) throw new Error('单人建房失败: ' + solo.error);
+    const sRoom = solo.roomId;
+    const sSess = { roomId: sRoom, playerId: solo.playerId, token: solo.token };
+
+    const b1 = await post('/api/addBot', { ...sSess });
+    const b2 = await post('/api/addBot', { ...sSess });
+    if (!b1.ok || !b2.ok) throw new Error('添加人机失败: ' + (b1.error || b2.error));
+    if (!b1.isBot || !b1.name.includes('人机')) throw new Error('人机标识/名字不对: ' + JSON.stringify(b1));
+    console.log(`✓ 单人添加 2 个人机（${b1.name} / ${b2.name}）`);
+
+    const st = await getState(sSess);
+    if (st.players.length !== 3) throw new Error('人机没进房间');
+    if (!st.players.some((p) => p.isBot)) throw new Error('isBot 没下发到前端状态');
+
+    // 总注封顶调小，让一局快点结束
+    await post('/api/config', {
+      ...sSess,
+      config: { ante: 10, baseStake: 10, maxStake: 100, maxPot: 300, seeMultiplier: 2, turnSeconds: 0 }
+    });
+
+    const started = await post('/api/start', { ...sSess });
+    if (!started.ok) throw new Error('单人+人机开局失败: ' + started.error);
+
+    // 真人开局就弃牌，人机自己互打（服务端 botTick 自动驱动）
+    let soloActions = 0;
+    let soloGuard = 0;
+    let soloDone = false;
+    const soloDeadline = Date.now() + 120000;
+    while (Date.now() < soloDeadline && soloGuard++ < 600) {
+      const s = await getState(sSess);
+      if (!s.ok) throw new Error('单人局取状态失败: ' + s.error);
+      if (s.phase !== 'playing') {
+        soloDone = s.phase === 'showdown';
+        break;
+      }
+      if (s.turnId === sSess.playerId) {
+        await post('/api/action', { ...sSess, action: 'fold', payload: {} });
+        soloActions++;
+      } else {
+        await sleep(500);
+      }
+    }
+
+    if (!soloDone) {
+      const s = await getState(sSess);
+      throw new Error(`单人+人机对局没打完（phase=${s.phase}，guard=${soloGuard}）`);
+    }
+    const soloFinal = await getState(sSess);
+    if (!soloFinal.lastResult || soloFinal.lastResult.winners.length === 0) {
+      throw new Error('单人局没有结算结果');
+    }
+    const soloNet = soloFinal.players.reduce((a, p) => a + p.net, 0);
+    if (soloNet !== 0) throw new Error('含人机的账目不零和: ' + soloNet);
+    if (soloFinal.pot !== 0) throw new Error('单人局结算后底池未清零');
+
+    const botId = soloFinal.players.find((p) => p.isBot).id;
+    const rm = await post('/api/removeBot', { ...sSess, target: botId });
+    if (!rm.ok) throw new Error('移除人机失败: ' + rm.error);
+    const afterRm = await getState(sSess);
+    if (afterRm.players.length !== 2) throw new Error('移除人机后人数不对');
+    if (afterRm.players.some((p) => p.id === botId)) throw new Error('人机没被移除');
+    console.log(`✓ 单人 + 2 人机打完整局（真人弃牌 ${soloActions} 次，人机自动互打）并移除人机`);
+  }
+
   // 1) 带口令建房 + 加入（加入不需要口令）
   const created = await post('/api/create', { name: '阿强', pin: '2468' });
   if (!created.ok) throw new Error('带口令建房失败: ' + created.error);

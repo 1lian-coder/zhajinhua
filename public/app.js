@@ -843,6 +843,7 @@
       configDirty = false;
       configSig = '';
     }
+    renderBots(st);
 
     if (st.phase === 'showdown') renderResult(st);
     else hideResult();
@@ -898,6 +899,7 @@
   function seatBadges(p, st) {
     var list = [];
     if (p.isDealer) list.push({ cls: 'dealer', text: '庄' });
+    if (p.isBot) list.push({ cls: 'bot', text: '人机' });
     if (p.isHost) list.push({ cls: 'host', text: '房主' });
 
     if (st.phase === 'lobby') {
@@ -1175,6 +1177,120 @@
       '<span class="mini-r">' + esc(rankLabel(card.r)) + '</span>' +
       '<span class="mini-s">' + esc(SUIT_SYMBOL[card.s] || '') + '</span>' +
       '</span>';
+  }
+
+  /* ------------------------------------------------------------- 人机管理 */
+
+  var botsSig = '';
+
+  function renderBots(st) {
+    var panel = $('panel-bots');
+    if (!panel) return;
+    var inLobby = st.phase === 'lobby' || st.phase === 'showdown';
+    panel.hidden = !inLobby;
+    if (!inLobby) {
+      botsSig = '';
+      return;
+    }
+
+    var isHost = st.hostId === meId();
+    var players = st.players || [];
+    var bots = [];
+    var humans = 0;
+    for (var i = 0; i < players.length; i++) {
+      if (players[i].isBot) bots.push(players[i]);
+      else humans++;
+    }
+
+    var sig = JSON.stringify([bots.map(function (b) { return b.id + ':' + b.name; }), isHost]);
+    if (sig === botsSig) {
+      // 只更新按钮可用态
+      var addBtn = $('btn-add-bot');
+      if (addBtn) addBtn.disabled = !isHost || players.length >= (st.maxPlayers || 6) || busy;
+      var cnt = $('bots-count');
+      if (cnt) cnt.textContent = players.length + '/' + (st.maxPlayers || 6) + ' 个座位';
+      return;
+    }
+    botsSig = sig;
+
+    var list = $('bots-list');
+    if (list) {
+      list.innerHTML = '';
+      if (!bots.length) {
+        var empty = document.createElement('p');
+        empty.className = 'tips';
+        empty.textContent = '还没有人机。点下方按钮添加，一个人也能开局。';
+        list.appendChild(empty);
+      }
+      for (var k = 0; k < bots.length; k++) {
+        (function (bot) {
+          var row = document.createElement('div');
+          row.className = 'bot-row';
+          var name = document.createElement('span');
+          name.className = 'bot-name';
+          name.textContent = bot.name;
+          row.appendChild(name);
+          if (isHost) {
+            var del = document.createElement('button');
+            del.className = 'btn btn-ghost btn-small';
+            del.type = 'button';
+            del.textContent = '移除';
+            del.addEventListener('click', function () {
+              doRemoveBot(bot.id, bot.name);
+            });
+            row.appendChild(del);
+          }
+          list.appendChild(row);
+        })(bots[k]);
+      }
+    }
+
+    var addBtn2 = $('btn-add-bot');
+    if (addBtn2) {
+      addBtn2.disabled = !isHost || players.length >= (st.maxPlayers || 6);
+      addBtn2.textContent = isHost ? '+ 添加人机' : '只有房主能添加人机';
+    }
+    var cnt2 = $('bots-count');
+    if (cnt2) cnt2.textContent = players.length + '/' + (st.maxPlayers || 6) + ' 个座位';
+    var hint = $('bots-hint');
+    if (hint) {
+      hint.textContent = humans <= 1 ? '一个人也能玩：加人机开局吧' : '满员时人机自动坐冷板凳之外';
+    }
+  }
+
+  function doAddBot() {
+    if (!session || busy) return;
+    busy = true;
+    var btn = $('btn-add-bot');
+    if (btn) btn.disabled = true;
+    api('/api/addBot', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token
+    }).then(function (res) {
+      busy = false;
+      if (btn && !btn.hidden) btn.disabled = false;
+      if (!res || !res.ok) {
+        toast((res && res.error) || '添加人机失败', 'err');
+      }
+      // 成功后由 SSE 推送新状态，无需本地处理
+    });
+  }
+
+  function doRemoveBot(botId, botName) {
+    if (!session || busy) return;
+    busy = true;
+    api('/api/removeBot', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      target: botId
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) {
+        toast((res && res.error) || '移除人机失败', 'err');
+      }
+    });
   }
 
   /* ------------------------------------------------------------- 大厅设置 */
@@ -1854,6 +1970,7 @@
     $('btn-exit').addEventListener('click', doExit);
     $('btn-bottom').addEventListener('click', doStart);
     $('btn-save-config').addEventListener('click', saveConfig);
+    $('btn-add-bot').addEventListener('click', doAddBot);
 
     $('act-look').addEventListener('click', function () {
       if ($('act-look').disabled) return;
