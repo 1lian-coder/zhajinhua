@@ -6,6 +6,8 @@ data/rooms.json.tmp
 data/settings.json
 data/tunnel.log
 data/tunnel.log.err
+data/tunnel.pid
+data/tunnel-url.txt
 
 tools/cloudflared.exe
 *.log

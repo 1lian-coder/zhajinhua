@@ -1,8 +1,35 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
+$Root = Split-Path -Parent $PSScriptRoot
+$PidFile = Join-Path $Root 'data\tunnel.pid'
+$UrlFile = Join-Path $Root 'data\tunnel-url.txt'
+
 $killed = 0
 
-# 1) 停掉 localhost.run 的 ssh 隧道
+# 收集自身及所有祖先进程，避免"误杀调用自己的那层 shell"
+$protected = @($PID)
+$cur = $PID
+for ($i = 0; $i -lt 8; $i++) {
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
+    if (-not $p) { break }
+    $cur = $p.ParentProcessId
+    if (-not $cur -or $cur -eq 0) { break }
+    $protected += $cur
+}
+
+# 1) 停隧道监督进程（只认 -File ...\share-ssh.ps1，且不碰自身/祖先）
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+    Where-Object {
+        $_.CommandLine -match 'share-ssh\.ps1' -and
+        $_.CommandLine -match '-File' -and
+        ($protected -notcontains $_.ProcessId)
+    } |
+    ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force
+        $killed++
+    }
+
+# 2) 兜底：直接停 localhost.run 的 ssh 隧道
 Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" |
     Where-Object { $_.CommandLine -match 'localhost\.run' } |
     ForEach-Object {
@@ -10,12 +37,15 @@ Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" |
         $killed++
     }
 
-# 2) 停掉占用 8080 的服务进程
+# 3) 停占用 8080 的服务进程
 Get-NetTCPConnection -LocalPort 8080 -State Listen |
     ForEach-Object {
         Stop-Process -Id $_.OwningProcess -Force
         $killed++
     }
+
+# 4) 清理状态文件
+Remove-Item $PidFile, $UrlFile -Force
 
 if ($killed -gt 0) {
     Write-Host "Stopped $killed process(es). Public link is no longer valid."
