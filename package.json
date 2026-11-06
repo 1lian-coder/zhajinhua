@@ -1,0 +1,17 @@
+{
+  "name": "zhajinhua-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "多人异地炸金花（房间号 + 实时同步 + 服务端发牌防作弊），零依赖",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test test/engine.test.js",
+    "e2e": "node test/e2e-http.js"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,13 @@
+node_modules/
+
+# 运行态数据：绝不能提交（settings.json 里有创建口令）
+data/rooms.json
+data/rooms.json.tmp
+data/settings.json
+data/tunnel.log
+data/tunnel.log.err
+
+tools/cloudflared.exe
+*.log
+.DS_Store
+Thumbs.db

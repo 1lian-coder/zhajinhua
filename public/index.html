@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#071a14">
+<meta name="format-detection" content="telephone=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="炸金花网页版：6 位房号组局，三张牌，实时同步，纯网页无需下载。">
+<title>炸金花 · 三张牌</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2b20'/%3E%3Ctext x='32' y='47' font-size='40' text-anchor='middle' fill='%23e8c37a'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/cards.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- JS 没加载成功的兜底提示（app.js 正常运行后会隐藏自己） -->
+  <div id="js-dead" class="dead-banner js-dead">
+    <b>页面没有加载完整</b>
+    <span>通常是网络不稳或链接已过期。请刷新一次；还是这样，就找开房的人要最新链接。</span>
+  </div>
+
+  <!-- 服务连不上时由 app.js 显示 -->
+  <div id="srv-dead" class="dead-banner srv-dead" hidden>
+    <b>连不上服务器</b>
+    <span>开房的人可能关了程序，或者公网链接已更换。请联系开房的人确认。</span>
+  </div>
+
+  <!-- 断线提示条 -->
+  <div id="conn-bar" class="conn-bar" hidden><i class="conn-dot"></i><span id="conn-text">连接中…</span></div>
+
+  <!-- ============================= 首页 ============================= -->
+  <section id="screen-home" class="screen home">
+    <div class="home-scroll">
+      <header class="home-head">
+        <div class="logo-row" aria-hidden="true">
+          <span class="logo-card red"><b>A</b><i>♥</i></span>
+          <span class="logo-card black"><b>K</b><i>♠</i></span>
+          <span class="logo-card red"><b>Q</b><i>♦</i></span>
+        </div>
+        <h1>炸金花</h1>
+        <p class="home-sub">6 位房号 · 三张牌 · 异地同步</p>
+      </header>
+
+      <div class="box">
+        <label class="field" for="nickname">
+          <span class="field-label">你的昵称</span>
+          <input id="nickname" class="input" type="text" maxlength="12" placeholder="比如：阿强" autocomplete="nickname" autocapitalize="off" enterkeyhint="done">
+        </label>
+      </div>
+
+      <div class="box" id="create-box">
+        <div class="box-head">
+          <h2>创建房间</h2>
+          <button id="btn-adv" class="link-btn" type="button" aria-expanded="false" aria-controls="create-adv">高级设置 <span id="adv-arrow">▾</span></button>
+        </div>
+        <div id="create-adv" class="create-adv cfg-grid" hidden></div>
+        <label class="field" id="pin-field" hidden>
+          <span class="field-label">创建口令（由开房的人设置）</span>
+          <input id="create-pin" class="input" type="tel" inputmode="numeric" maxlength="8" placeholder="输入口令" autocomplete="off">
+        </label>
+        <button id="btn-create" class="btn btn-primary btn-big" type="button">创建房间</button>
+      </div>
+
+      <div class="box" id="join-box">
+        <div class="box-head">
+          <h2>加入房间</h2>
+          <span class="muted">输入 6 位房号</span>
+        </div>
+        <div class="join-row">
+          <input id="join-room" class="input input-room" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="837261" autocomplete="off" enterkeyhint="go" aria-label="6 位房号">
+          <button id="btn-join" class="btn btn-primary" type="button">加入</button>
+        </div>
+      </div>
+
+      <div class="box resume-box" id="resume-box" hidden>
+        <div class="box-head"><h2>上次的房间</h2></div>
+        <button id="btn-resume" class="btn btn-ghost btn-big" type="button">继续进入 <span id="resume-room" class="mono"></span></button>
+        <p class="tips">房间还在的话，可以恢复原来的身份和牌局。</p>
+      </div>
+
+      <footer class="home-foot">
+        <p>纯网页 · 无需下载 · 无第三方库 · 数据只存在你的服务端</p>
+      </footer>
+    </div>
+  </section>
+
+  <!-- ============================= 牌桌 ============================= -->
+  <section id="screen-table" class="screen table-screen" hidden>
+    <header class="topbar">
+      <button id="btn-room" class="room-chip" type="button" title="点击复制房间号" aria-label="复制房间号">
+        <span class="room-cap">房号</span>
+        <span id="room-id" class="room-num">------</span>
+      </button>
+      <div class="topbar-mid">
+        <span id="online-count" class="online"><i class="dot"></i><span id="online-text">0/6 在线</span></span>
+        <span id="phase-tag" class="phase-tag">大厅</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-invite" class="icon-btn" type="button" title="复制邀请链接">邀请</button>
+        <button id="btn-exit" class="icon-btn danger" type="button" title="退出房间">退出</button>
+      </div>
+    </header>
+
+    <main id="table-main" class="table-main">
+      <div class="info-strip">
+        <div class="stat"><span class="stat-cap">底池</span><b id="stat-pot" class="stat-val">0</b></div>
+        <div class="stat"><span class="stat-cap">单注</span><b id="stat-stake" class="stat-val">0</b></div>
+        <div class="stat"><span class="stat-cap">局数</span><b id="stat-hand" class="stat-val">0</b></div>
+        <div class="stat"><span class="stat-cap">庄家</span><b id="stat-dealer" class="stat-val sm">—</b></div>
+      </div>
+
+      <div class="felt">
+        <div id="seats" class="seats"></div>
+
+        <div id="my-area" class="my-area">
+          <div class="my-head">
+            <span class="my-cap">我的牌</span>
+            <span id="my-hand-name" class="hand-chip" hidden>—</span>
+          </div>
+          <div id="my-cards" class="my-cards"></div>
+          <div id="my-hint" class="my-hint">等待进入牌局</div>
+        </div>
+      </div>
+
+      <!-- 大厅：房间设置 -->
+      <section id="panel-lobby" class="panel" hidden>
+        <div class="panel-head">
+          <h2>房间设置</h2>
+          <span id="config-lock" class="muted">只有房主能改</span>
+        </div>
+        <div id="config-form" class="cfg-grid"></div>
+        <div class="panel-actions">
+          <button id="btn-save-config" class="btn btn-primary" type="button" hidden>保存设置</button>
+          <span id="config-msg" class="muted"></span>
+        </div>
+        <p class="tips">底注：开局每人先交；单注：闷牌跟注额；看牌后下注 × 倍数；总注封顶自动开牌。</p>
+      </section>
+
+      <!-- 结算 -->
+      <section id="panel-result" class="panel result-panel" hidden></section>
+
+      <!-- 日志 -->
+      <section id="log-panel" class="panel log-panel">
+        <div class="panel-head">
+          <h2>牌局日志</h2>
+          <span id="log-empty" class="muted">暂无</span>
+        </div>
+        <div id="log-list" class="log-list"></div>
+      </section>
+    </main>
+
+    <footer class="bottom-bar">
+      <div class="turn-tip">
+        <span id="turn-text">等待开始</span>
+        <span id="turn-count" class="turn-count" hidden></span>
+      </div>
+
+      <div id="action-btns" class="action-btns" hidden>
+        <button id="act-look" class="act act-look" type="button"><span class="act-main">看牌</span><span class="act-sub">不结束回合</span></button>
+        <button id="act-call" class="act act-call" type="button"><span class="act-main">跟注</span><span class="act-sub">下注</span></button>
+        <button id="act-raise" class="act act-raise" type="button"><span class="act-main">加注</span><span class="act-sub">选金额</span></button>
+        <button id="act-compare" class="act act-compare" type="button"><span class="act-main">比牌</span><span class="act-sub">输者出局</span></button>
+        <button id="act-fold" class="act act-fold" type="button"><span class="act-main">弃牌</span><span class="act-sub">本局结束</span></button>
+      </div>
+
+      <button id="btn-bottom" class="btn btn-primary btn-big" type="button" hidden>开始游戏</button>
+    </footer>
+  </section>
+</div>
+
+<div id="modal-root" class="modal-root" hidden></div>
+<div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+<noscript><div class="noscript">需要开启 JavaScript 才能玩牌。</div></noscript>
+
+<script src="/app.js"></script>
+</body>
+</html>

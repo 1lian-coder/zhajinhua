@@ -1,0 +1,9 @@
+@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+title Zhajinhua - Set Create PIN
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\set-pin.ps1"
+
+echo.
+pause

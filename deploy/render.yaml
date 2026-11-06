@@ -1,0 +1,17 @@
+name: zhajinhua
+version: 1.0.0
+
+services:
+  - type: web
+    name: zhajinhua
+    runtime: node
+    plan: free
+    buildCommand: echo "no build required"
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # 创建口令：不在仓库里写死，Render 创建时会让你在网页上填
+      - key: CREATE_PIN
+        sync: false

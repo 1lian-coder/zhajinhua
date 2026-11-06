@@ -1,0 +1,202 @@
+/* =========================================================================
+   炸金花 · 扑克牌视觉（纯 CSS 绘制 + Unicode 花色，零图片零 CDN）
+   牌面白底、红黑花色；牌背为 CSS 渐变纹理 + ♠ 徽记。
+   ========================================================================= */
+
+.pcard {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--pcard-w, 74px);
+  height: calc(var(--pcard-w, 74px) * 1.42);
+  perspective: 900px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.pcard-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+  transition: transform .5s cubic-bezier(.3, .7, .3, 1);
+}
+
+.pcard.flipped .pcard-inner { transform: rotateY(180deg); }
+
+.pcard-back,
+.pcard-face {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 8px;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  overflow: hidden;
+}
+
+/* ------------------------------- 牌背 ------------------------------- */
+
+.pcard-back {
+  border: 2px solid #e9efe9;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(232, 195, 122, .26), rgba(232, 195, 122, 0) 62%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .075) 0 5px, rgba(255, 255, 255, 0) 5px 10px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .2) 0 5px, rgba(0, 0, 0, 0) 5px 10px),
+    linear-gradient(158deg, #1e6149 0%, #103c2d 55%, #08251c 100%);
+  box-shadow:
+    inset 0 0 0 2px rgba(8, 37, 28, .95),
+    inset 0 0 0 3px rgba(232, 195, 122, .32),
+    0 3px 8px rgba(0, 0, 0, .38);
+  transform: rotateY(0deg);
+}
+
+.pcard-back::after {
+  content: "♠";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--pcard-w, 74px) * .34);
+  line-height: 1;
+  color: rgba(232, 195, 122, .6);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+}
+
+/* ------------------------------- 牌面 ------------------------------- */
+
+.pcard-face {
+  transform: rotateY(180deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(120% 90% at 20% 0%, #ffffff 0%, #f4f4ee 62%, #e8e9e1 100%);
+  border: 1px solid rgba(0, 0, 0, .28);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, .35);
+  color: #191919;
+}
+
+.pcard-face.red { color: #cf352e; }
+
+.pcard-face::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  bottom: 3px;
+  left: 3px;
+  border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+.pc-corner {
+  position: absolute;
+  top: 5px;
+  left: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+
+.pc-corner.br {
+  top: auto;
+  left: auto;
+  right: 6px;
+  bottom: 5px;
+  transform: rotate(180deg);
+}
+
+.pc-corner .r {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: calc(var(--pcard-w, 74px) * .185);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.pc-corner .s {
+  font-size: calc(var(--pcard-w, 74px) * .15);
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.pc-center {
+  font-size: calc(var(--pcard-w, 74px) * .46);
+  line-height: 1;
+  opacity: .92;
+  transform: translateY(1%);
+}
+
+/* 结算翻牌时的小动画 */
+.pcard.flipped .pcard-face { animation: faceGlow .5s ease-out .16s; }
+
+@keyframes faceGlow {
+  from { box-shadow: 0 0 0 0 rgba(232, 195, 122, .55); }
+  to { box-shadow: 0 3px 8px rgba(0, 0, 0, .35); }
+}
+
+/* --------------------------- 迷你牌（座位/结算用） --------------------------- */
+
+.mini-card {
+  flex: 0 0 auto;
+  width: 21px;
+  height: 29px;
+  border-radius: 4px;
+  background: linear-gradient(170deg, #ffffff, #eff0e9);
+  border: 1px solid rgba(0, 0, 0, .25);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  color: #1a1a1a;
+  overflow: hidden;
+}
+
+.mini-card.red { color: #cf352e; }
+
+.mini-r {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mini-s {
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+.mini-card.back {
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .09) 0 3px, rgba(255, 255, 255, 0) 3px 6px),
+    linear-gradient(158deg, #1e6149, #0a2b20);
+  border: 1px solid rgba(232, 195, 122, .35);
+}
+
+.mini-card.back::after {
+  content: "♠";
+  display: block;
+  font-size: 12px;
+  line-height: 1;
+  color: rgba(232, 195, 122, .5);
+}
+
+/* 座位上的三张暗牌 */
+.seat-cards .mini-card.back { opacity: .75; }
+
+/* 针对窄屏的迷你牌尺寸微调 */
+@media (max-width: 359px) {
+  .mini-card { width: 19px; height: 26px; }
+  .mini-r { font-size: 10px; }
+  .mini-s { font-size: 9px; }
+}
