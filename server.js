@@ -381,7 +381,7 @@ const api = {
     if (rateLimited('join', 30)) throw userError('操作太频繁，请稍后再试');
     if (totalPlayerCount() >= MAX_TOTAL_PLAYERS) throw userError('服务器人数已满，请稍后再试');
     const room = getRoomOrThrow(body.roomId);
-    if (room.players.size >= 6) throw userError('房间已满（最多 6 人）');
+    if (room.players.size >= 15) throw userError('房间已满（最多 15 人）');
     // 房间密码校验（防猜：全局计数，10 分钟窗口 20 次）
     if (room.joinPin) {
       if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
@@ -515,7 +515,7 @@ const api = {
       exists: true,
       roomId: room.id,
       players: room.players.size,
-      maxPlayers: 6,
+      maxPlayers: 15,
       phase: room.phase,
       host: (room.players.get(room.hostId) || {}).name || null,
       hasJoinPin: !!room.joinPin

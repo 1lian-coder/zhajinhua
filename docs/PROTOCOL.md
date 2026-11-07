@@ -59,6 +59,7 @@ SSE 长连接。事件类型：
 | `raise` | `{ "to": 40 }` | 加注到单注 `to`（必须 > 当前 stake 且 ≤ maxStake） |
 | `fold` | `{}` | 弃牌 |
 | `allin` | `{}` | 孤注一掷：筹码不够跟注时押上全部，留在牌局直到开牌（`myOptions` 会给出 `cost`=剩余筹码） |
+| `bid` | `{ "bid": 2 }` | **仅抢庄阶段**：0=不抢，1~4=抢庄倍数。全员选完或到 `bidDeadline` 自动定庄（倍数最高者当庄，并列随机；无人抢按座位轮转）。下注阶段发 bid 返回「现在不是抢庄阶段」 |
 | `compare` | `{ "target": "p2" }` | 约比牌，付 `cost`，输的人出局 |
 
 ### POST /api/chat
@@ -119,7 +120,8 @@ SSE 长连接。事件类型：
 ```json
 {
   "roomId": "837261",
-  "phase": "playing",                  // lobby | playing | showdown
+  "phase": "playing",                  // lobby | bidding | playing | showdown
+                                       // bidding = 抢庄阶段（房间配置 dealerBid=true 时，开局先抢庄再下注）
   "handNo": 3,
   "config": { "ante":10, "initialChips":1000, "baseStake":10, "maxStake":100,
               "maxPot":3000, "seeMultiplier":2, "special235":false,
@@ -132,6 +134,9 @@ SSE 长连接。事件类型：
   "dealerId": "p2",
   "turnId": "p3",                      // 轮到谁，null = 无人
   "turnDeadline": 1699999999999,       // 毫秒时间戳，0 = 不限时
+  "bidDeadline": 1699999500000,        // 抢庄阶段截止时刻（phase=bidding 时有效，否则 0）
+  "bidStartedAt": 1699999400000,       // 抢庄阶段开始时刻
+  "myBid": 2,                          // 我自己的抢庄选择（null=未选）
   "serverNow": 1699999950000,          // 用于校准倒计时（别用本机时间）
   "hostId": "p1",
   "maxPlayers": 6,
@@ -147,6 +152,7 @@ SSE 长连接。事件类型：
       "connected": true,               // 是否在线（人机恒为 true）
       "isBot": false,                 // 是否人机玩家
       "allIn": false,                 // 本局是否孤注一掷（全下留场，不再参与轮转）
+      "bid": 2,                       // 抢庄选择：null=未选，0=不抢，1~4=倍数（仅 bidding/playing 早期有意义）
       "stats": { "hands": 5, "wins": 2, "best": 360 },  // 本房间累计战绩（落盘保留）
       "isHost": true,
       "isDealer": false,

@@ -151,10 +151,35 @@ test('牌面 label 正确', () => {
 
 // ---------------------------------------------------------------- 房间规则
 
-test('房间人数上限 6 人，第 7 人被拒绝', () => {
-  const room = newRoom(6, QUIET);
-  assert.strictEqual(room.players.size, 6);
-  assert.throws(() => room.addPlayer('P7'), /房间已满/);
+test('房间人数上限 15 人，第 16 人被拒绝', () => {
+  const room = new Room('000001', QUIET);
+  for (let i = 0; i < 15; i++) room.addPlayer('P' + (i + 1));
+  assert.strictEqual(room.players.size, 15);
+  assert.throws(() => room.addPlayer('P16'), /房间已满/);
+});
+
+test('15 人开局：52 张牌每人 3 张足够，底池与战绩正确', () => {
+  const room = new Room('big15', { ...QUIET, turnSeconds: 0 });
+  for (let i = 0; i < 15; i++) room.addPlayer('P' + (i + 1));
+  room.startHand(room.order[0]);
+  assert.strictEqual(room.phase, 'playing');
+  let dealt = 0;
+  for (const p of room.players.values()) {
+    assert.strictEqual(p.cards.length, 3);
+    assert.strictEqual(p.bet, QUIET.ante);
+    dealt += 3;
+  }
+  assert.strictEqual(dealt, 45);
+  assert.ok(dealt <= 52, '52 张牌必须够发');
+  assert.strictEqual(room.pot, QUIET.ante * 15);
+  // 其余玩家依次弃牌，只剩庄家一人 → 立即结算
+  let guard = 0;
+  while (room.phase === 'playing' && guard++ < 30) {
+    room.act(room.turnId, 'fold');
+  }
+  assert.strictEqual(room.phase, 'showdown');
+  const netSum = [...room.players.values()].reduce((a, p) => a + p.net, 0);
+  assert.strictEqual(netSum, 0);
 });
 
 test('开局至少 2 人', () => {
@@ -699,7 +724,115 @@ test('掉线托管：真人断线后超宽限期由系统代打，牌局不卡�
   assert.strictEqual(room.botTick(Date.now()), false, '在线真人的回合绝不代打');
 });
 
-// ------------------------------------------------------------ 自动连开
+// ------------------------------------------------------------ 抢庄
+
+test('抢庄：倍数最高者当庄，全部选完后自动进入下注阶段', () => {
+  const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+
+  assert.strictEqual(room.phase, 'bidding', '开启抢庄后应先进入抢庄阶段');
+  assert.ok(room.bidDeadline > Date.now(), '应有抢庄截止时刻');
+  assert.strictEqual(room.dealerId, null, '抢庄阶段庄家未定');
+  assert.strictEqual(room.pot, QUIET.ante * 3, '底注已收');
+
+  room.act(a, 'bid', { bid: 2 });
+  room.act(b, 'bid', { bid: 4 });
+  room.act(c, 'bid', { bid: 1 });
+
+  // 全员选完应自动定庄
+  assert.strictEqual(room.phase, 'playing');
+  assert.strictEqual(room.dealerId, b, '倍数最高的 b 应成为庄家');
+  assert.strictEqual(room.turnId, room.nextInHandAfter(b), '庄家下一位先行动');
+
+  // 抢庄阶段已结束，不能再 bid
+  assert.throws(() => room.act(a, 'bid', { bid: 3 }), /不是抢庄阶段/);
+});
+
+test('抢庄：倍数并列时在并列者中随机确定庄家', () => {
+  const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  room.act(a, 'bid', { bid: 3 });
+  room.act(b, 'bid', { bid: 3 });
+  room.act(c, 'bid', { bid: 1 });
+
+  assert.strictEqual(room.phase, 'playing');
+  const d = room.dealerId;
+  assert.ok(d === a || d === b, `庄家应是 a 或 b，实际 ${d}`);
+  assert.notStrictEqual(d, c);
+});
+
+test('抢庄：无人抢时按座位轮转确定庄家', () => {
+  const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  room.act(a, 'bid', { bid: 0 });
+  room.act(b, 'bid', { bid: 0 });
+  // c 未选，到截止时间视为不抢
+  const future = room.bidDeadline + 1000;
+  room.tick(future);
+
+  assert.strictEqual(room.phase, 'playing');
+  assert.ok(room.dealerId, '应有庄家（轮转产生）');
+  assert.notStrictEqual(room.players.get(room.dealerId).bid, null, '未选的应被记为 0');
+});
+
+test('抢庄：非法倍数被拒，非抢庄阶段不能 bid', () => {
+  const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
+  const [a] = room.order;
+  room.startHand(a);
+  assert.throws(() => room.act(a, 'bid', { bid: 5 }), /抢庄倍数无效/);
+  assert.throws(() => room.act(a, 'bid', { bid: -1 }), /抢庄倍数无效/);
+  assert.throws(() => room.act(a, 'call', {}), /抢庄阶段/);
+
+  // 未开启抢庄的房间，bid 动作不可用
+  const room2 = newRoom(2, QUIET);
+  room2.startHand(room2.order[0]);
+  assert.strictEqual(room2.phase, 'playing');
+  assert.throws(() => room2.act(room2.turnId, 'bid', { bid: 2 }), /不是抢庄阶段/);
+});
+
+test('抢庄：人在抢庄阶段退出，人数不足时作废退注', () => {
+  const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  room.act(a, 'bid', { bid: 2 });
+  room.removePlayer(b);
+  room.removePlayer(c);
+
+  // 只剩一人：到点/全选完时作废
+  const future = room.bidDeadline + 1000;
+  room.tick(future);
+  assert.strictEqual(room.phase, 'lobby', '人数不足应作废回大厅');
+  const netSum = [...room.players.values()].reduce((s, p) => s + p.net, 0);
+  assert.strictEqual(netSum, 0, '退注后零和');
+});
+
+test('抢庄：人机在抢庄阶段自动决策，整局可打完', () => {
+  const room = new Room('bid6', { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0, maxPot: 300 });
+  const me = room.addPlayer('独狼');
+  room.addBot();
+  room.addBot();
+  room.startHand(me.id);
+
+  assert.strictEqual(room.phase, 'bidding');
+  // 时间推进 3 秒：人机（最迟约 2.7 秒）已选，但未到 5 秒截止，真人仍可选
+  room.tick(Date.now() + 3000);
+  const bots = [...room.players.values()].filter((p) => p.isBot);
+  assert.ok(bots.every((p) => p.bid != null), '人机应已做出抢庄选择');
+  // 真人选不抢
+  room.act(me.id, 'bid', { bid: 0 });
+
+  assert.strictEqual(room.phase, 'playing', '全员选完应进入下注阶段');
+  // 之后正常打完
+  let guard = 0;
+  while (room.phase === 'playing' && guard++ < 60) {
+    if (room.turnId === me.id) room.act(me.id, 'fold');
+    else room.botTick(Date.now() + 999999);
+  }
+  assert.strictEqual(room.phase, 'showdown');
+});
 
 test('自动连开：结算后按配置排定下一局，到点自动开局；可取消', () => {
   const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: true, autoNextSeconds: 3 });
