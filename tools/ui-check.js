@@ -306,6 +306,61 @@ async function main() {
   await sleep(400);
   await shot('02-lobby');
 
+  // ---- 房间密码 & 自动连开：UI 元素与真实设置 ----
+  {
+    const pinUi = await cdp.eval(`(() => {
+      const input = document.getElementById('room-pin-input');
+      const btn = document.getElementById('btn-save-room-pin');
+      const state = document.getElementById('room-pin-state');
+      const cfgForm = document.getElementById('config-form');
+      return JSON.stringify({
+        pinInput: !!input,
+        pinBtn: !!btn,
+        pinState: state ? state.textContent.trim() : '',
+        hasAutoNextField: !!(cfgForm && cfgForm.querySelector('[data-key="autoNext"]')),
+        hasAutoNextSecField: !!(cfgForm && cfgForm.querySelector('[data-key="autoNextSeconds"]'))
+      });
+    })()`);
+    const pu = JSON.parse(pinUi);
+    if (!pu.pinInput || !pu.pinBtn || !pu.hasAutoNextField || !pu.hasAutoNextSecField) {
+      throw new Error('房间密码/自动连开 UI 缺失: ' + pinUi);
+    }
+    console.log('✓ 房间密码 + 自动连开 配置项已渲染');
+
+    // 真实设置房间密码，并确认状态文案变化
+    const setPin = await cdp.eval(`(() => {
+      const input = document.getElementById('room-pin-input');
+      const btn = document.getElementById('btn-save-room-pin');
+      if (!input || !btn) return 'no-el';
+      input.value = '8642';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      btn.click();
+      return 'clicked';
+    })()`);
+    await sleep(1200);
+    const pinAfter = await cdp.eval(
+      `document.getElementById('room-pin-state').textContent.trim()`
+    );
+    console.log(`  房间密码按钮: ${setPin} → 状态: ${pinAfter}`);
+    if (pinAfter.indexOf('已设置') < 0) throw new Error('设置房间密码后状态未更新: ' + pinAfter);
+
+    const st = await getJSON(
+      `/api/state?roomId=${roomId}&playerId=${hostSession.playerId}&token=${hostSession.token}`
+    );
+    if (st.hasJoinPin !== true) throw new Error('服务端没记录房间密码');
+    if (JSON.stringify(st).indexOf('8642') >= 0) throw new Error('状态泄露了房间密码明文');
+    console.log('✓ 房间密码真实生效（服务端 hasJoinPin=true，明文不下发）');
+
+    // 清掉密码，方便后面用 HTTP 机器人加入
+    await post('/api/setRoomPin', {
+      roomId,
+      playerId: hostSession.playerId,
+      token: hostSession.token,
+      password: ''
+    });
+    await sleep(600);
+  }
+
   // ---- 两个机器人玩家 ----
   const bots = [];
   for (const name of BOT_NAMES.slice(0, BOT_COUNT)) {
@@ -520,8 +575,7 @@ async function main() {
         theadHasZhanJi: !!(thead && thead.textContent.indexOf('战绩') >= 0),
         allinSeenSomewhere: !!allinBadge
       });
-    })()`);
-    const u = JSON.parse(ui);
+    })()`);    const u = JSON.parse(ui);
     console.log('  新功能 DOM: ' + ui);
     if (!u.chatBtn || !u.soundBtn || !u.allinBtnExists || !u.statsColInResult || !u.theadHasZhanJi) {
       throw new Error('新功能 UI 元素缺失: ' + ui);

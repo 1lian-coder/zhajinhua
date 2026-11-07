@@ -30,7 +30,9 @@
     { key: 'seeMultiplier', label: '看牌倍数', def: 2, min: 1, max: 4, step: 1 },
     { key: 'turnSeconds', label: '思考秒数', def: 45, min: 0, max: 600, step: 5 },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
-    { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true }
+    { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
+    { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
+    { key: 'autoNextSeconds', label: '自动开局等待(秒)', def: 8, min: 3, max: 120, step: 1 }
   ];
 
   var DEFAULT_CONFIG = {};
@@ -655,13 +657,26 @@
       $('join-room').focus();
       return;
     }
+    var pinField = $('join-pin-field');
+    var password = pinField && !pinField.hidden
+      ? digits($('join-pin').value).slice(0, 8)
+      : '';
     busy = true;
     var btn = $('btn-join');
     btn.disabled = true;
-    api('/api/join', { roomId: rid, name: name }).then(function (res) {
+    api('/api/join', { roomId: rid, name: name, password: password }).then(function (res) {
       busy = false;
       btn.disabled = false;
       if (!res || !res.ok) {
+        // 需要密码：展开密码输入框并聚焦
+        if (res && res.code === 'ROOM_PASSWORD_REQUIRED') {
+          if (pinField) pinField.hidden = false;
+          var pe = $('join-pin');
+          if (pe) {
+            try { pe.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ }
+            pe.focus();
+          }
+        }
         toast((res && res.error) || '加入房间失败', 'err');
         return;
       }
@@ -671,6 +686,53 @@
         token: res.token,
         name: name
       });
+    });
+  }
+
+  /** 用户输完房号后探测一下有没有房间密码，有就提前展开输入框 */
+  function probeRoomPin() {
+    var rid = digits($('join-room').value).slice(0, 6);
+    if (rid.length !== 6) return;
+    fetch('/api/roomInfo?roomId=' + encodeURIComponent(rid), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var field = $('join-pin-field');
+        if (field && d && d.ok && d.exists && d.hasJoinPin && digits($('join-room').value).slice(0, 6) === rid) {
+          field.hidden = false;
+        } else if (field) {
+          field.hidden = true;
+          var inp = $('join-pin');
+          if (inp) inp.value = '';
+        }
+      })
+      .catch(function () { /* 探测失败不影响正常加入 */ });
+  }
+
+  function saveRoomPin() {
+    if (!session || busy) return;
+    var input = $('room-pin-input');
+    var val = digits(input ? input.value : '').slice(0, 8);
+    if (val && (val.length < 4)) {
+      toast('密码需 4~8 位数字', 'err');
+      return;
+    }
+    busy = true;
+    var btn = $('btn-save-room-pin');
+    if (btn) btn.disabled = true;
+    api('/api/setRoomPin', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      password: val
+    }).then(function (res) {
+      busy = false;
+      if (btn) btn.disabled = false;
+      if (!res || !res.ok) {
+        toast((res && res.error) || '保存失败', 'err');
+        return;
+      }
+      if (input) input.value = '';
+      toast(val ? '房间密码已设置' : '已取消房间密码', 'ok');
     });
   }
 
@@ -1475,6 +1537,22 @@
     }
     $('btn-save-config').hidden = !isHost;
     $('config-lock').textContent = isHost ? '你是房主，可修改后保存' : '只有房主可修改，你可以先看看';
+
+    // 房间密码状态（明文永不下发，只显示"已设置/未设置"）
+    var pinState = $('room-pin-state');
+    if (pinState) pinState.textContent = st.hasJoinPin ? '已设置密码' : '未设置密码';
+    var pinInput = $('room-pin-input');
+    var pinBtn = $('btn-save-room-pin');
+    if (pinInput) {
+      pinInput.disabled = !isHost;
+      pinInput.placeholder = isHost ? '4~8 位数字，留空=取消密码' : '只有房主可修改';
+    }
+    if (pinBtn) {
+      pinBtn.hidden = !isHost;
+      pinBtn.disabled = busy;
+    }
+    var lockNote = $('room-pin-lock');
+    if (lockNote) lockNote.hidden = isHost;
     $('config-msg').textContent = '';
   }
 
@@ -1542,6 +1620,14 @@
       html += '</div>';
     }
     html += '</div>';
+
+    // 自动连开提示（服务端排定 nextHandAt，前端只做显示与倒计时）
+    if (st.nextHandAt) {
+      html += '<div class="auto-next" id="auto-next-bar">' +
+        '<span id="auto-next-text">准备自动开下一局…</span>' +
+        '<button id="btn-pause-auto" class="btn btn-ghost btn-small" type="button">先别开</button>' +
+        '</div>';
+    }
 
     // 开牌情况
     var rows = [];
@@ -1645,6 +1731,37 @@
       });
     }
     renderPenaltyList();
+
+    // 自动连开：绑定「先别开」并立即刷新倒计时
+    var pauseBtn = panel.querySelector('#btn-pause-auto');
+    if (pauseBtn) {
+      pauseBtn.addEventListener('click', function () {
+        if (!session || busy) return;
+        pauseBtn.disabled = true;
+        api('/api/pauseAuto', {
+          roomId: session.roomId,
+          playerId: session.playerId,
+          token: session.token
+        }).then(function (res) {
+          if (!res || !res.ok) {
+            pauseBtn.disabled = false;
+            toast((res && res.error) || '取消失败', 'err');
+          } else {
+            toast('已取消自动开局', 'ok');
+          }
+        });
+      });
+    }
+    updateAutoNextText();
+  }
+
+  /** 自动连开倒计时文案（用服务端 nextHandAt 与本机时间差做相对估算） */
+  function updateAutoNextText() {
+    var el = document.getElementById('auto-next-text');
+    if (!el || !state || !state.nextHandAt) return;
+    var st = state;
+    var left = Math.max(0, Math.round((st.nextHandAt - st.serverNow) / 1000 - (Date.now() - clock.localAt) / 1000));
+    el.textContent = left > 0 ? (left + ' 秒后自动开下一局') : '正在开下一局…';
   }
 
   function renderPenaltyList() {
@@ -1853,6 +1970,7 @@
   function tick() {
     if (!state || currentScreen !== 'table') return;
     var st = state;
+    if (st.phase === 'showdown' && st.nextHandAt) updateAutoNextText();
     var rem = remainingMs();
     var total = ((st.config && st.config.turnSeconds) || 0) * 1000;
     var showCount = st.phase === 'playing' && st.turnDeadline > 0 && rem != null;
@@ -2123,6 +2241,7 @@
       var v = digits(this.value).slice(0, 6);
       if (v !== this.value) this.value = v;
       updateResumeBox();
+      if (v.length === 6) probeRoomPin();
     });
 
     $('nickname').addEventListener('change', function () {
@@ -2166,6 +2285,10 @@
     $('btn-bottom').addEventListener('click', doStart);
     $('btn-save-config').addEventListener('click', saveConfig);
     $('btn-add-bot').addEventListener('click', doAddBot);
+    $('btn-save-room-pin').addEventListener('click', saveRoomPin);
+    $('join-pin').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); doJoin(); }
+    });
     $('btn-chat').addEventListener('click', openChatDialog);
     $('btn-sound').addEventListener('click', function () {
       soundOn = !soundOn;

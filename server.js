@@ -381,7 +381,18 @@ const api = {
     if (rateLimited('join', 30)) throw userError('操作太频繁，请稍后再试');
     if (totalPlayerCount() >= MAX_TOTAL_PLAYERS) throw userError('服务器人数已满，请稍后再试');
     const room = getRoomOrThrow(body.roomId);
-    if (room.players.size >= 6) throw new Error('房间已满（最多 6 人）');
+    if (room.players.size >= 6) throw userError('房间已满（最多 6 人）');
+    // 房间密码校验（防猜：全局计数，10 分钟窗口 20 次）
+    if (room.joinPin) {
+      if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
+      if (!room.checkJoinPin(body.password)) {
+        recordPinFail();
+        throw userError(
+          String(body.password || '') ? '房间密码不正确' : '这个房间需要密码',
+          'ROOM_PASSWORD_REQUIRED'
+        );
+      }
+    }
     const player = room.addPlayer(body.name);
     markDirty();
     broadcast(room);
@@ -457,6 +468,23 @@ const api = {
     return { ok: true, config: room.config };
   },
 
+  /** 房主设置/清除房间加入密码 */
+  async setRoomPin(body) {
+    const { room, player } = authPlayer(body);
+    const pin = room.setJoinPin(player.id, body.password);
+    markDirty();
+    broadcast(room);
+    return { ok: true, hasJoinPin: !!pin };
+  },
+
+  /** 取消本局的自动连开 */
+  async pauseAuto(body) {
+    const { room, player } = authPlayer(body);
+    room.pauseAutoNext(player.id);
+    broadcast(room);
+    return { ok: true };
+  },
+
   async start(body) {
     const { room, player } = authPlayer(body);
     if (room.phase === 'lobby') room.startHand(player.id);
@@ -489,7 +517,8 @@ const api = {
       players: room.players.size,
       maxPlayers: 6,
       phase: room.phase,
-      host: (room.players.get(room.hostId) || {}).name || null
+      host: (room.players.get(room.hostId) || {}).name || null,
+      hasJoinPin: !!room.joinPin
     };
   }
 };

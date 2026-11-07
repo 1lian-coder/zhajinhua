@@ -28,9 +28,9 @@
 
 ### POST /api/join
 ```json
-{ "roomId":"837261", "name":"小李" }
+{ "roomId":"837261", "name":"小李", "password":"1234" }
 ```
-返回同上。房间不存在/已满返回 `{ok:false,error}`。
+`password` 仅在房间设了房间密码时必填。返回同上。房间不存在/已满/密码错误返回 `{ok:false,error,code?}`。
 
 ### POST /api/rejoin
 断线重连，恢复身份。
@@ -68,6 +68,19 @@ SSE 长连接。事件类型：
 ```
 `text` 服务端清洗（去控制字符、trim、截 30 字）；每玩家 3 秒内最多 2 条。
 响应 `{ok:true}`，内容通过 state 的 `chat` 数组下发（最近 12 条，每条带递增 `seq`，前端靠 seq 判断新消息）。
+
+### POST /api/setRoomPin
+房主设置/清除**房间加入密码**（仅 lobby / showdown 阶段）。与创建口令无关：这个限制的是**谁能进这个房间**。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"a1b2...", "password":"1234" }
+```
+`password` 为 4~8 位数字；传空字符串表示清除密码。返回 `{ok:true, hasJoinPin:true|false}`。
+
+`POST /api/join` 需带上 `password`；缺失或错误返回 `{ok:false, code:"ROOM_PASSWORD_REQUIRED", error:"..."}`。
+连续输错 20 次锁定 10 分钟。密码明文**永不下发**，state 里只有 `hasJoinPin`。
+
+### POST /api/pauseAuto
+取消本局的自动连开（任何人可调用）。`{ roomId, playerId, token }`
 
 ### POST /api/addBot
 房主添加人机玩家（仅 lobby / showdown 阶段）。人机由服务端 `botTick` 驱动自动出牌。
@@ -113,6 +126,9 @@ SSE 长连接。事件类型：
               "turnSeconds":45, "autoRebuy":true },
   "pot": 120,
   "stake": 20,                         // 当前单注（闷牌跟注额）
+  "hasJoinPin": true,                  // 房间是否设了加入密码（明文永不下发）
+  "nextHandAt": 0,                     // 自动连开：下一局的计划时刻（0=不自动）
+  "nextHandSeconds": 8,                // 自动连开的等待秒数（配置值）
   "dealerId": "p2",
   "turnId": "p3",                      // 轮到谁，null = 无人
   "turnDeadline": 1699999999999,       // 毫秒时间戳，0 = 不限时

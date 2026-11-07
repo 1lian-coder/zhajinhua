@@ -1733,6 +1733,35 @@ input {
   white-space: nowrap;
 }
 
+/* ==================== 自动连开 / 房间密码 ==================== */
+
+.auto-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0 4px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(232, 195, 122, .1);
+  border: 1px solid rgba(232, 195, 122, .35);
+}
+
+.auto-next span {
+  font-size: 13px;
+  color: var(--gold);
+}
+
+.room-pin-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.room-pin-block .join-row {
+  margin-top: 8px;
+}
+
 /* ==================== 加载/连通性兜底提示 ==================== */
 
 .dead-banner {

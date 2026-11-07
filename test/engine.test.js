@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /**
  * 引擎测试：牌型判定 + 规则校验 + 随机对局不变量
@@ -697,6 +697,123 @@ test('掉线托管：真人断线后超宽限期由系统代打，牌局不卡�
   room.turnId = a;
   room.turnStartedAt = t0 - 999999;
   assert.strictEqual(room.botTick(Date.now()), false, '在线真人的回合绝不代打');
+});
+
+// ------------------------------------------------------------ 自动连开
+
+test('自动连开：结算后按配置排定下一局，到点自动开局；可取消', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: true, autoNextSeconds: 3 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+
+  assert.strictEqual(room.phase, 'showdown');
+  assert.ok(room.nextHandAt > 0, '开启自动连开后应排定下一局时刻');
+  const delay = room.nextHandAt - Date.now();
+  assert.ok(delay > 2500 && delay <= 3500, `等待时长应接近 3 秒，实际 ${delay}`);
+
+  // 未到点不自动开
+  assert.strictEqual(room.tick(Date.now()), false, '未到点不应开局');
+  assert.strictEqual(room.phase, 'showdown');
+
+  // 到点自动开局（用伪造的未来时间）
+  const startedAt = room.nextHandAt + 100;
+  assert.strictEqual(room.tick(startedAt), true, '到点应自动开局');
+  assert.strictEqual(room.phase, 'playing');
+  assert.strictEqual(room.handNo, 2, '应进入第 2 局');
+  assert.strictEqual(room.nextHandAt, 0, '开局后清空计划');
+
+  // 关闭自动连开则不排定
+  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: false });
+  const [x, y] = room2.order;
+  room2.startHand(x);
+  forceCards(room2, x, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room2, y, [card('S', 5), card('H', 6), card('D', 7)]);
+  room2.turnId = x;
+  room2.act(x, 'compare', { target: y });
+  assert.strictEqual(room2.nextHandAt, 0, '未开启自动连开不应排定');
+});
+
+test('自动连开：可手动取消；手动「下一局」也会清空计划', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: true, autoNextSeconds: 30 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+  assert.ok(room.nextHandAt > 0);
+
+  // 任何玩家都能取消
+  assert.strictEqual(room.pauseAutoNext(b), true);
+  assert.strictEqual(room.nextHandAt, 0);
+  // 取消后到点也不会自动开
+  assert.strictEqual(room.tick(Date.now() + 60000), false);
+  assert.strictEqual(room.phase, 'showdown');
+
+  // 手动开下一局
+  room.nextHand(a);
+  assert.strictEqual(room.phase, 'playing');
+  assert.strictEqual(room.nextHandAt, 0);
+
+  // 非房间成员不能取消
+  assert.throws(() => room2Pause(), /玩家不存在/);
+  function room2Pause() { room.pauseAutoNext('ghost'); }
+});
+
+// ------------------------------------------------------------ 房间密码
+
+test('房间密码：设置/校验/清除，且不会下发给客户端', () => {
+  const room = newRoom(2, QUIET);
+  const [host, other] = room.order;
+  assert.strictEqual(room.joinPin, '');
+
+  // 非房主不能设
+  assert.throws(() => room.setJoinPin(other, '1234'), /只有房主/);
+  // 位数校验
+  assert.throws(() => room.setJoinPin(host, '12'), /4~8 位数字/);
+  assert.throws(() => room.setJoinPin(host, '123456789'), /4~8 位数字/);
+
+  // 正常设置（非数字字符会被剔除）
+  room.setJoinPin(host, '12 34');
+  assert.strictEqual(room.joinPin, '1234');
+
+  // 校验
+  assert.strictEqual(room.checkJoinPin('1234'), true);
+  assert.strictEqual(room.checkJoinPin('4 3 2 1'), false);
+  assert.strictEqual(room.checkJoinPin(''), false);
+  assert.strictEqual(room.checkJoinPin(null), false);
+
+  // 无密码时任何输入都通过
+  const room2 = newRoom(2, QUIET);
+  assert.strictEqual(room2.checkJoinPin(''), true);
+  assert.strictEqual(room2.checkJoinPin('9999'), true);
+
+  // 客户端只能看到 hasJoinPin，拿不到明文
+  const view = room.serialize(host);
+  assert.strictEqual(view.hasJoinPin, true);
+  assert.strictEqual(view.joinPin, undefined, '绝不能下发密码明文');
+  assert.strictEqual(JSON.stringify(view).indexOf('1234') >= 0 && JSON.stringify(view).indexOf('"1234"') >= 0, false, '状态里不应出现密码');
+
+  // 落盘保留，且 fromJSON 不泄露
+  const raw = JSON.parse(JSON.stringify(room.toJSON()));
+  const restored = Room.fromJSON(raw);
+  assert.strictEqual(restored.joinPin, '1234', '密码随落盘保留');
+  assert.strictEqual(restored.serialize(host).joinPin, undefined);
+
+  // 牌局中不能改
+  room.clearJoinPin = null;
+  const room3 = newRoom(2, QUIET);
+  room3.startHand(room3.order[0]);
+  assert.throws(() => room3.setJoinPin(room3.order[0], '5678'), /牌局进行中/);
+
+  // 清除
+  room.setJoinPin(host, '');
+  assert.strictEqual(room.joinPin, '');
+  assert.strictEqual(room.checkJoinPin(''), true);
 });
 
 // ------------------------------------------------------------ 战绩与聊天

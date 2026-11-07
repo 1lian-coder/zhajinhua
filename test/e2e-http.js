@@ -394,6 +394,93 @@ async function main() {
   }
 
 
+  // 1x) 房间密码：设置后无密码/错密码不能进，对的能进；不泄露明文
+  {
+    const pinRoom = await post('/api/create', { name: '房主甲', pin: '2468' });
+    if (!pinRoom.ok) throw new Error('建房失败: ' + pinRoom.error);
+    const pr = { roomId: pinRoom.roomId, playerId: pinRoom.playerId, token: pinRoom.token };
+
+    const setR = await post('/api/setRoomPin', { ...pr, password: '1234' });
+    if (!setR.ok) throw new Error('设房间密码失败: ' + setR.error);
+
+    const info = await get(`/api/roomInfo?roomId=${pr.roomId}`);
+    if (info.hasJoinPin !== true) throw new Error('roomInfo 没报告 hasJoinPin');
+
+    const noPw = await post('/api/join', { roomId: pr.roomId, name: '无密码者' });
+    if (noPw.ok || noPw.code !== 'ROOM_PASSWORD_REQUIRED') {
+      throw new Error('无密码竟然进房了: ' + JSON.stringify(noPw));
+    }
+    const badPw = await post('/api/join', { roomId: pr.roomId, name: '错密码者', password: '9999' });
+    if (badPw.ok) throw new Error('错密码竟然进房了');
+
+    const goodPw = await post('/api/join', { roomId: pr.roomId, name: '对密码者', password: '1234' });
+    if (!goodPw.ok) throw new Error('正确密码进不去: ' + goodPw.error);
+
+    // 状态下发不能出现明文密码
+    const v = await get(`/api/state?roomId=${pr.roomId}&playerId=${pr.playerId}&token=${pr.token}`);
+    if (v.hasJoinPin !== true) throw new Error('state 没下发 hasJoinPin');
+    if (JSON.stringify(v).indexOf('"1234"') >= 0) throw new Error('状态里泄露了房间密码明文');
+
+    // 清除密码后可直接加入
+    await post('/api/setRoomPin', { ...pr, password: '' });
+    const afterClear = await post('/api/join', { roomId: pr.roomId, name: '清除后加入' });
+    if (!afterClear.ok) throw new Error('取消密码后仍进不去');
+
+    console.log('✓ 房间密码：无密码/错密码被拒（code=ROOM_PASSWORD_REQUIRED），正确密码可进，明文不泄露');
+
+    // 清理这个临时房间
+    await post('/api/leave', pr);
+    await sleep(3100); // 让创建限频窗口过去
+  }
+
+  // 1w) 自动连开：开启后结算到点自动开下一局
+  {
+    const anRoom = await post('/api/create', {
+      name: '自动连开房主',
+      pin: '2468',
+      config: { ante: 10, initialChips: 1000, baseStake: 10, maxStake: 100, maxPot: 60, seeMultiplier: 2, turnSeconds: 0, autoNext: true, autoNextSeconds: 3 }
+    });
+    if (!anRoom.ok) throw new Error('建房失败: ' + anRoom.error);
+    const ar = { roomId: anRoom.roomId, playerId: anRoom.playerId, token: anRoom.token };
+    // 加一个人机保证 ≥2 人
+    const anBot = await post('/api/addBot', { ...ar });
+    if (!anBot.ok) throw new Error('加人机失败: ' + anBot.error);
+
+    await post('/api/start', { ...ar });
+    // 一路弃牌/跟注把这一局打完
+    let g = 0;
+    let settled = false;
+    while (g++ < 60) {
+      const s = await getState(ar);
+      if (s.phase !== 'playing') { settled = true; break; }
+      if (s.turnId === ar.playerId) {
+        await post('/api/action', { ...ar, action: 'fold', payload: {} });
+      } else {
+        await sleep(700); // 等人机
+      }
+    }
+    if (!settled) throw new Error('自动连开房的第一局没打完');
+
+    const afterFirst = await getState(ar);
+    if (afterFirst.phase !== 'showdown') throw new Error('应处于结算阶段');
+    if (!afterFirst.nextHandAt) throw new Error('开启自动连开后应排定 nextHandAt');
+
+    // 等它自动开下一局
+    let autoStarted = false;
+    const dl = Date.now() + 30000;
+    while (Date.now() < dl) {
+      const s = await getState(ar);
+      if (s.phase === 'playing' && s.handNo >= 2) { autoStarted = true; break; }
+      await sleep(400);
+    }
+    if (!autoStarted) throw new Error('自动连开没有生效（30 秒内没自动开第二局）');
+    console.log('✓ 自动连开生效：第 1 局结算后排定，3 秒后自动开始第 2 局');
+
+    // 清理自动连开房间，免得占满房间上限
+    await post('/api/leave', ar);
+    await sleep(3100); // 让创建限频窗口过去
+  }
+
   // 2) 房间信息 & 身份校验
   const info = await get(`/api/roomInfo?roomId=${roomId}`);
   if (!info.exists || info.players !== 4) throw new Error('房间信息错误: ' + JSON.stringify(info));
