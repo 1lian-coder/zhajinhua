@@ -154,15 +154,22 @@ async function waitUntil(fn, timeout, interval) {
 async function waitPhase(sess, phase, timeout) {
   const end = Date.now() + (timeout || 15000);
   let last = '';
+  let lastErr = '';
   while (Date.now() < end) {
-    const st = await stateOf(sess);
-    if (st && st.ok) {
-      last = st.phase;
-      if (st.phase === phase) return st;
+    try {
+      const st = await stateOf(sess);
+      if (st && st.ok) {
+        last = st.phase;
+        if (st.phase === phase) return st;
+      }
+    } catch (e) {
+      lastErr = e.message; // 瞬时网络/服务抖动：继续轮询直到超时
     }
     await sleep(300);
   }
-  throw new Error('等待 phase=' + phase + ' 超时（最后 phase=' + last + '）');
+  throw new Error(
+    '等待 phase=' + phase + ' 超时（最后 phase=' + last + (lastErr ? ' · 最后错误=' + lastErr : '') + '）'
+  );
 }
 
 /* ---------------------------------------------------------------- CDP 客户端 */
@@ -483,11 +490,15 @@ async function layoutChecks(width, n) {
     ' }' +
     ' const T = ' + OVERLAP_TOLERANCE + ';' +
     ' const pairs = [];' +
+    ' const shallow = [];' +
     ' for (let a = 0; a < rects.length; a++) for (let b = a + 1; b < rects.length; b++) {' +
     '   const A = rects[a], B2 = rects[b];' +
     '   const ox = Math.min(A.x + A.w, B2.x + B2.w) - Math.max(A.x, B2.x);' +
     '   const oy = Math.min(A.y + A.h, B2.y + B2.h) - Math.max(A.y, B2.y);' +
-    '   if (ox > T && oy > T) pairs.push((A.pid || a) + "~" + (B2.pid || b) + "(" + Math.round(ox) + "x" + Math.round(oy) + ")");' +
+    '   if (ox > 0 && oy > 0) {' +
+    '     const tag = (A.pid || a) + "~" + (B2.pid || b) + "(" + Math.round(ox) + "x" + Math.round(oy) + ")";' +
+    '     if (ox > T && oy > T) pairs.push(tag); else shallow.push(tag);' +
+    '   }' +
     ' }' +
     ' const myEl = document.getElementById("my-seat") || document.querySelector(".my-seat");' +
     ' let myOverlap = 0;' +
@@ -498,7 +509,7 @@ async function layoutChecks(width, n) {
     '     const oy = Math.min(m.top + m.height, R.y + R.h) - Math.max(m.top, R.y);' +
     '     if (ox > T && oy > T) myOverlap++;' +
     '   } }' +
-    ' return JSON.stringify({ overflow: overflow, seatCount: seats.length, hasMySeat: !!myEl, pairs: pairs, myOverlap: myOverlap });' +
+    ' return JSON.stringify({ overflow: overflow, seatCount: seats.length, hasMySeat: !!myEl, pairs: pairs, shallow: shallow, myOverlap: myOverlap });' +
     '})()';
 
   const r = JSON.parse(await cdp.eval(expr));
@@ -507,11 +518,15 @@ async function layoutChecks(width, n) {
     ' → 共' + total + '/' + n;
 
   const f1 = check('[' + width + 'px] a.无横向滚动 (溢出 ' + r.overflow + 'px)', r.overflow <= 0);
+  const shallowNote = (r.shallow && r.shallow.length)
+    ? '；边框级浅重叠(<=' + OVERLAP_TOLERANCE + 'px) ' + r.shallow.length + ' 对: ' + r.shallow.slice(0, 6).join(', ')
+    : '';
   const f2 = check(
     '[' + width + 'px] b.座位无重叠 (' + r.pairs.length + ' 对',
     r.pairs.length === 0,
     r.pairs.slice(0, 6).join(', ') +
-      (r.myOverlap ? '；另有 my-seat 与座位重叠 ' + r.myOverlap + ' 对（参考项）' : '')
+      (r.myOverlap ? '；另有 my-seat 与座位重叠 ' + r.myOverlap + ' 对（参考项）' : '') +
+      shallowNote
   );
   const f3 = check('[' + width + 'px] c.座位数量 ' + seatDesc, total === n);
   const shot = path.join(SHOT_DIR, n + 'p-' + width + '.png');
@@ -690,9 +705,21 @@ async function playHand(B) {
   const end = Date.now() + SHOWDOWN_TIMEOUT_MS;
   let uiFolds = 0;
   let httpFolds = 0;
+  let badStreak = 0; // 连续取状态失败计数，防网络长期异常时死转
   while (Date.now() < end) {
-    const st = await stateOf(B);
-    if (!st.ok) throw new Error('取状态失败: ' + (st.error || '?'));
+    let st = null;
+    try {
+      st = await stateOf(B);
+    } catch (e) {
+      st = null;
+    }
+    if (!st || !st.ok) {
+      badStreak += 1;
+      if (badStreak > 25) throw new Error('连续取状态失败 25 次，放弃本局');
+      await sleep(700);
+      continue;
+    }
+    badStreak = 0;
     if (st.phase === 'showdown' || st.phase === 'lobby') {
       info('本局结束: phase=' + st.phase + ' · 真人弃牌 CDP=' + uiFolds + ' HTTP兜底=' + httpFolds);
       return st;
@@ -700,18 +727,27 @@ async function playHand(B) {
     if (st.phase === 'playing' && st.turnId === st.me && !st.folded && st.inHand) {
       const ok = await foldViaUI();
       if (ok) uiFolds += 1;
-      const st2 = await stateOf(B);
-      const stillMine = st2.ok && st2.phase === 'playing' && st2.turnId === st2.me && !st2.folded;
+      let st2 = null;
+      try {
+        st2 = await stateOf(B);
+      } catch (e) {
+        st2 = null;
+      }
+      const stillMine = st2 && st2.ok && st2.phase === 'playing' && st2.turnId === st2.me && !st2.folded;
       if (stillMine) {
         // UI 弃牌失败（重构中按钮可能缺失），HTTP 兜底保证牌局能走完
-        await postJSON('/api/action', {
-          roomId: B.roomId,
-          playerId: B.playerId,
-          token: B.token,
-          action: 'fold',
-          payload: {}
-        });
-        httpFolds += 1;
+        try {
+          await postJSON('/api/action', {
+            roomId: B.roomId,
+            playerId: B.playerId,
+            token: B.token,
+            action: 'fold',
+            payload: {}
+          });
+          httpFolds += 1;
+        } catch (e) {
+          /* 下一轮重试 */
+        }
       }
     }
     await sleep(600);
