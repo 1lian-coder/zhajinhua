@@ -636,21 +636,22 @@ input {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 80%;
-  height: 68%;
-  max-width: 360px;
-  max-height: 236px;
+  width: 94%;
+  height: 56%;
+  max-width: 430px;
+  max-height: 205px;
   transform: translate(-50%, -50%);
-  border-radius: 50%;
+  border-radius: 999px; /* 跑道形长桌 */
   background:
     radial-gradient(118% 92% at 50% 4%, rgba(64, 158, 118, .78) 0%, rgba(21, 78, 58, .93) 46%, rgba(8, 38, 30, .98) 100%),
     var(--felt-2);
-  border: 2px solid rgba(232, 195, 122, .42);
+  border: 7px solid #20160f; /* 深木色边栏 */
   box-shadow:
     inset 0 0 42px rgba(0, 0, 0, .52),
     inset 0 10px 30px rgba(255, 255, 255, .07),
     0 12px 32px rgba(0, 0, 0, .45),
-    0 0 0 6px rgba(5, 26, 20, .6),
+    0 0 0 2px rgba(90, 62, 40, .9),
+    0 0 0 4px rgba(232, 195, 122, .3),
     0 0 24px rgba(232, 195, 122, .14);
   transition: box-shadow .35s ease;
 }
@@ -662,7 +663,7 @@ input {
   right: 0;
   bottom: 0;
   left: 0;
-  border-radius: 50%;
+  border-radius: 999px;
   pointer-events: none;
   background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, .022) 0 2px, transparent 2px 4px);
 }
@@ -670,13 +671,13 @@ input {
 .table-oval::after {
   content: "";
   position: absolute;
-  top: 10px;
-  right: 10px;
-  bottom: 10px;
-  left: 10px;
-  border-radius: 50%;
+  top: 9px;
+  right: 9px;
+  bottom: 9px;
+  left: 9px;
+  border-radius: 999px;
   pointer-events: none;
-  border: 1px solid rgba(232, 195, 122, .16);
+  border: 1px dashed rgba(232, 195, 122, .22); /* 下注线 */
   box-shadow: inset 0 0 26px rgba(0, 0, 0, .38);
 }
 
@@ -2122,6 +2123,88 @@ input {
   color: #ff8f7d;
 }
 
+/* ==================== 桌面下注筹码堆 ==================== */
+
+.bet-chip-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.bet-chip {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(12, 32, 26, .94), rgba(6, 20, 16, .94));
+  border: 1px solid rgba(232, 195, 122, .45);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+  font-size: 11px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bet-chip .chip-ico {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f6d789, #caa14b 60%, #8a6a25);
+  border: 1px solid rgba(0, 0, 0, .35);
+  flex: 0 0 auto;
+}
+
+/* ==================== 动作气泡（跟注/加注/弃牌…） ==================== */
+
+.action-pop {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translate(-50%, 6px) scale(.92);
+  z-index: 40;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(15, 38, 30, .96);
+  border: 2px solid var(--gold);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5), 0 0 12px rgba(232, 195, 122, .3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+
+.action-pop.show {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.action-pop.hide {
+  opacity: 0;
+  transform: translate(-50%, -6px) scale(.94);
+}
+
+.action-pop.pop-call  { border-color: var(--gold); }
+.action-pop.pop-raise { border-color: #6fb7ff; color: #cfe6ff; background: rgba(10, 30, 52, .96); }
+.action-pop.pop-fold  { border-color: #ff7a6b; color: #ffb0a5; background: rgba(60, 18, 14, .96); }
+.action-pop.pop-allin {
+  border-color: #ffb14d;
+  color: #ffd9a1;
+  background: rgba(70, 40, 8, .96);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5), 0 0 16px rgba(255, 140, 40, .55);
+}
+.action-pop.pop-compare { border-color: #c79bff; color: #e6d4ff; background: rgba(44, 20, 66, .96); }
+.action-pop.pop-timeout { border-color: #9aa7b0; color: #c9d4da; background: rgba(30, 36, 40, .96); }
+
 /* ==================== 椭圆牌桌重构：座位尺寸档位 / 抢庄 / 徽标补充 ==================== */
 
 /* 覆盖后面聊天区的 .seat{position:relative}，座位必须绝对定位 */
@@ -2299,7 +2382,7 @@ input {
 /* --- 窄屏适配 --- */
 @media (max-width: 359px) {
   .table-stage { height: clamp(280px, 46vh, 350px); }
-  .table-oval { width: 84%; height: 70%; }
+  .table-oval { width: 90%; height: 56%; }
   .table-center { width: 58%; }
   .pot-val { font-size: clamp(22px, 8.4vw, 30px); }
   .my-cards { --pcard-w: 62px; gap: 8px; min-height: 88px; }
@@ -2311,7 +2394,7 @@ input {
 
 @media (min-width: 420px) {
   .table-stage { height: clamp(330px, 52vh, 440px); }
-  .table-oval { max-width: 400px; max-height: 270px; }
+  .table-oval { max-width: 460px; max-height: 210px; }
   .my-cards { --pcard-w: 84px; min-height: 112px; }
   .seat { width: 74px; }
   .seat .avatar-face { width: 30px; height: 30px; font-size: 14px; }
@@ -2331,6 +2414,6 @@ input {
 /* 315~360 的极窄屏：椭圆台面进一步压缩，保证 15 人不挤 */
 @media (max-width: 359px) {
   .table-stage { height: clamp(280px, 45vh, 340px); }
-  .table-oval { width: 86%; height: 72%; }
+  .table-oval { width: 90%; height: 56%; }
   .pot-val { font-size: clamp(22px, 8.6vw, 30px); }
 }

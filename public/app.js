@@ -1,4 +1,4 @@
-﻿/* =========================================================================
+/* =========================================================================
  * 炸金花 · 前端逻辑（原生 JS，零依赖、零构建）
  *
  *  - 身份：localStorage 保存 { roomId, playerId, token }，刷新自动 /api/rejoin
@@ -178,6 +178,7 @@
   var modalDismiss = null;
   var lastPhase = '';
   var seatMode = 'normal';       // 座位尺寸档位：normal / compact / mini
+  var seatPosMap = {};           // pid -> {x,y}：layoutSeats 输出，供桌面筹码定位
   var seatLayoutTimer = null;    // 尺寸变化后重排座位的防抖计时器
   var dealerBannerTimer = null;  // 定庄提示条淡出计时器
   var lastDealerBannerKey = '';  // 避免重复弹「庄家：xxx」
@@ -1087,7 +1088,10 @@
       seats[m].style.transform =
         'translate(-50%,-50%) translate(' +
         (Math.round(pos[m].x * 10) / 10) + 'px,' + (Math.round(pos[m].y * 10) / 10) + 'px)';
+      var pidKey = seats[m].getAttribute('data-pid');
+      if (pidKey) seatPosMap[pidKey] = { x: pos[m].x, y: pos[m].y };
     }
+    if (state) layoutBetChips(state);
   }
 
   function scheduleSeatLayout() {
@@ -1114,6 +1118,118 @@
         el.hidden = true;
       }, 320);
     }, 2000);
+  }
+
+  /* ------------------------------------------------- 桌面筹码与动作提示 */
+
+  /** 每个下注 > 0 的玩家，在桌面上其座位与台心之间摆放筹码堆 */
+  function layoutBetChips(st) {
+    var stage = $('table-stage');
+    var layer = $('bet-chip-layer');
+    if (!stage || !layer || !st) return;
+    var players = st.players || [];
+    var mid = meId();
+    var W = stage.clientWidth || 0;
+    var H = stage.clientHeight || 0;
+    if (!W || !H) return;
+
+    var wanted = {};
+    var slot = 0;
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i];
+      if (!(p.bet > 0)) continue;
+      var x, y;
+      if (p.id === mid) {
+        x = W / 2;
+        y = H - 16;
+      } else if (seatPosMap[p.id]) {
+        x = seatPosMap[p.id].x * 0.68 + W / 2 * 0.32;
+        y = seatPosMap[p.id].y * 0.68 + H / 2 * 0.32;
+      } else {
+        x = W / 2 + (slot % 2 ? 46 : -46);
+        y = H / 2;
+        slot++;
+      }
+      wanted[p.id] = { x: Math.round(x), y: Math.round(y), amt: p.bet };
+    }
+
+    var nodes = layer.querySelectorAll('.bet-chip');
+    for (var j = 0; j < nodes.length; j++) {
+      var nid = nodes[j].getAttribute('data-pid');
+      if (!wanted[nid]) nodes[j].parentNode.removeChild(nodes[j]);
+    }
+    for (var key in wanted) {
+      if (!Object.prototype.hasOwnProperty.call(wanted, key)) continue;
+      var w = wanted[key];
+      var el = layer.querySelector('.bet-chip[data-pid="' + key + '"]');
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'bet-chip';
+        el.setAttribute('data-pid', key);
+        el.innerHTML = '<i class="chip-ico"></i><b></b>';
+        layer.appendChild(el);
+      }
+      el.style.left = w.x + 'px';
+      el.style.top = w.y + 'px';
+      var bEl = el.querySelector('b');
+      if (bEl) bEl.textContent = fmtChips(w.amt);
+    }
+  }
+
+  /** 动作气泡：挂在对应座位上方，比聊天气泡更醒目（按动作类型着色） */
+  function popActionBubble(pid, cls, text) {
+    var seat = document.querySelector('.seat[data-pid="' + pid + '"]');
+    var host = seat || $('my-area');
+    if (!host) return;
+    var old = host.querySelector('.action-pop');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var b = document.createElement('div');
+    b.className = 'action-pop ' + cls;
+    b.textContent = text;
+    host.appendChild(b);
+    void b.offsetWidth;
+    b.className += ' show';
+    setTimeout(function () {
+      b.className = 'action-pop ' + cls + ' hide';
+      setTimeout(function () {
+        if (b.parentNode) b.parentNode.removeChild(b);
+      }, 240);
+    }, 2400);
+  }
+
+  var lastActionT = -1;
+
+  /** 从日志增量里解析别人的动作，在牌桌上弹提示（跟注/加注/弃牌/比牌/全下） */
+  function handleActions(st) {
+    var logs = st.logs || [];
+    if (lastActionT < 0) {
+      // 首次渲染：只记录基线，不回放历史
+      lastActionT = logs.length ? logs[logs.length - 1].t : 0;
+      return;
+    }
+    var maxT = lastActionT;
+    for (var i = 0; i < logs.length; i++) {
+      var L = logs[i];
+      if (!L || L.t <= lastActionT) continue;
+      if (L.t > maxT) maxT = L.t;
+      var text = String(L.text || '');
+      var m, pid = null, cls = '', label = '';
+      if ((m = text.match(/^(.{1,12}?) 跟注 (\d+)/))) { pid = pidByName(st, m[1]); cls = 'pop-call'; label = '跟注 ' + m[2]; }
+      else if ((m = text.match(/^(.{1,12}?) 加注到 (\d+)/))) { pid = pidByName(st, m[1]); cls = 'pop-raise'; label = '加注到 ' + m[2]; }
+      else if ((m = text.match(/^(.{1,12}?) 孤注一掷/))) { pid = pidByName(st, m[1]); cls = 'pop-allin'; label = '孤注一掷'; }
+      else if ((m = text.match(/^(.{1,12}?) 约 .+? 比牌/))) { pid = pidByName(st, m[1]); cls = 'pop-compare'; label = '比牌'; }
+      else if ((m = text.match(/^(.{1,12}?) 超时/))) { pid = pidByName(st, m[1]); cls = 'pop-timeout'; label = '超时弃牌'; }
+      else if ((m = text.match(/^(.{1,12}?) 弃牌/))) { pid = pidByName(st, m[1]); cls = 'pop-fold'; label = '弃牌'; }
+      if (pid && label) popActionBubble(pid, cls, label);
+    }
+    lastActionT = maxT;
+  }
+
+  function pidByName(st, name) {
+    var ps = st.players || [];
+    for (var i = 0; i < ps.length; i++) if (ps[i].name === name) return ps[i].id;
+    return null;
   }
 
   /* ------------------------------------------------------------------ 渲染 */
@@ -1305,6 +1421,7 @@
     renderLogs(st);
     renderBottom(st);
     handleChat(st);
+    handleActions(st);
     handleTurnAlert(st);
     tick();
 
