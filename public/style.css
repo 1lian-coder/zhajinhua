@@ -2923,3 +2923,15 @@ input {
   .loan-item { font-size: 11px; }
   .pd-grid { font-size: 12px; }
 }
+/* 出牌顺序位次徽标 */
+.badge.ord {
+  color: #cfe6ff;
+  background: rgba(90, 150, 255, .18);
+  border: 1px solid rgba(120, 170, 255, .5);
+  font-weight: 700;
+  min-width: 14px;
+  text-align: center;
+}
+
+.my-order { color: #cfe6ff; }
+.my-order.now { color: #ffe9a8; }

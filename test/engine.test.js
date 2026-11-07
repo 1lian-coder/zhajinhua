@@ -1270,3 +1270,54 @@ test('设置锁定：首局开始后房主也不能改规则；开局前可自�
     '首局开始后（包括局间）都不能改设置'
   );
 });
+
+test('比牌后双方都算看过牌：输家闷牌也能看到自己的牌并留场观战', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  assert.strictEqual(room.players.get(a).seen, false, '开局都是闷牌');
+  assert.strictEqual(room.players.get(b).seen, false);
+
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+
+  assert.strictEqual(room.players.get(a).seen, true, '比牌后主动方算看过牌');
+  assert.strictEqual(room.players.get(b).seen, true, '比牌后被比方也算看过牌');
+
+  const loserId = room.players.get(a).folded ? a : b;
+  const winnerId = loserId === a ? b : a;
+  const lv = room.serialize(loserId);
+  assert.ok(lv.myCards && lv.myCards.length === 3, '输家（原本闷牌）能看到自己的 3 张牌');
+  assert.ok(lv.myHandName, '输家能看到自己的牌型');
+  const wv = room.serialize(winnerId);
+  assert.ok(wv.myCards && wv.myCards.length === 3, '赢家也能看到自己的牌');
+  // 输家留在房间里继续观战
+  assert.strictEqual(lv.phase, 'playing');
+  assert.strictEqual(room.players.get(loserId).inHand, true, '输家仍在本局（留场观战）');
+  assert.strictEqual(room.players.get(loserId).folded, true);
+  void c;
+});
+
+test('出牌顺序：以当前行动者开头轮转，弃牌/全下的人自动移出', () => {
+  const room = newRoom(4, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c, d] = room.order;
+  room.startHand(a);
+
+  const st0 = room.serialize(a);
+  assert.strictEqual(st0.turnOrder.length, room.actorsInHand().length);
+  assert.strictEqual(st0.turnOrder[0], room.turnId, '顺序第一个是当前行动者');
+  assert.strictEqual(st0.myTurnIndex, st0.turnOrder.indexOf(a), '我的位次正确');
+
+  // 行动一次后顺序跟着当前行动者重排
+  room.act(room.turnId, 'call');
+  const st1 = room.serialize(a);
+  assert.strictEqual(st1.turnOrder[0], room.turnId, '顺序随当前行动者变化');
+
+  // 有人弃牌后从顺序里移除
+  const foldedId = room.turnId;
+  room.act(foldedId, 'fold');
+  const st2 = room.serialize(a);
+  assert.strictEqual(st2.turnOrder.indexOf(foldedId), -1, '弃牌的人不在顺序里');
+  assert.strictEqual(st2.turnOrder.length, room.actorsInHand().length);
+  void b; void c; void d;
+});

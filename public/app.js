@@ -1887,6 +1887,13 @@
     if (p.isBot) list.push({ cls: 'bot', text: '人机' });
     if (p.isHost) list.push({ cls: 'host', text: '房主' });
 
+    // 出牌顺序位次（从当前行动者开始算；顺序变化会自动重排）
+    if (st.phase === 'playing') {
+      var order = st.turnOrder || [];
+      var oi = order.indexOf(p.id);
+      if (oi >= 0) list.push({ cls: 'ord', text: String(oi + 1) });
+    }
+
     // 抢庄阶段：先显示每个人实时选择（抢xN 蓝色 / 不抢 灰色 / 待选）
     if (st.phase === 'bidding') {
       if (p.bid == null) list.push({ cls: 'waiting', text: '待选' });
@@ -2064,6 +2071,17 @@
       }
 
       var myTurn = !!(st.phase === 'playing' && st.turnId === me.id);
+      var orderEl = $('my-order');
+      if (orderEl) {
+        if (st.phase === 'playing' && st.myTurnIndex >= 0) {
+          var total = (st.turnOrder || []).length || 0;
+          orderEl.textContent = (st.myTurnIndex + 1) + (total > 1 ? '/' + total : '');
+          orderEl.className = 'my-order' + (myTurn ? ' now' : '');
+        } else {
+          orderEl.textContent = '-';
+          orderEl.className = 'my-order';
+        }
+      }
       $('my-seat').className = 'my-seat' +
         (myTurn ? ' turn' : '') +
         (me.isDealer && st.phase !== 'lobby' ? ' dealer' : '') +
