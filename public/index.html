@@ -7,7 +7,7 @@
 <meta name="format-detection" content="telephone=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="炸金花网页版：6 位房号组局，三张牌，实时同步，纯网页无需下载。">
+<meta name="description" content="炸金花网页版：6 位房号组局，最多 15 人，抢庄玩法，实时同步，纯网页无需下载。">
 <title>炸金花 · 三张牌</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2b20'/%3E%3Ctext x='32' y='47' font-size='40' text-anchor='middle' fill='%23e8c37a'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
@@ -99,7 +99,7 @@
         <span id="room-id" class="room-num">------</span>
       </button>
       <div class="topbar-mid">
-        <span id="online-count" class="online"><i class="dot"></i><span id="online-text">0/6 在线</span></span>
+        <span id="online-count" class="online"><i class="dot"></i><span id="online-text">0/15 在线</span></span>
         <span id="phase-tag" class="phase-tag">大厅</span>
       </div>
       <div class="topbar-actions">
@@ -111,17 +111,52 @@
     </header>
 
     <main id="table-main" class="table-main">
-      <div class="info-strip">
-        <div class="stat"><span class="stat-cap">底池</span><b id="stat-pot" class="stat-val">0</b></div>
-        <div class="stat"><span class="stat-cap">单注</span><b id="stat-stake" class="stat-val">0</b></div>
-        <div class="stat"><span class="stat-cap">局数</span><b id="stat-hand" class="stat-val">0</b></div>
-        <div class="stat"><span class="stat-cap">庄家</span><b id="stat-dealer" class="stat-val sm">—</b></div>
+      <!-- 椭圆牌桌：对手座位由 JS 定位到上半椭圆弧，"我"固定在下方 my-area -->
+      <div id="table-stage" class="table-stage">
+        <div id="table-oval" class="table-oval">
+          <div id="table-center" class="table-center">
+            <div id="center-phase" class="center-phase">等待开局</div>
+            <div class="pot-row">
+              <span class="pot-cap">底池</span>
+              <b id="stat-pot" class="pot-val">0</b>
+            </div>
+            <div class="center-meta">
+              <span>单注 <b id="stat-stake">0</b></span>
+              <i class="center-dot"></i>
+              <span>第 <b id="stat-hand">0</b> 局</span>
+            </div>
+            <div class="center-dealer">
+              <div id="dealer-avatar" class="dealer-avatar" hidden><span id="dealer-initial">?</span></div>
+              <span class="center-dealer-label">庄家</span>
+              <span id="stat-dealer" class="center-dealer-name">—</span>
+            </div>
+          </div>
+        </div>
+        <div id="bid-strip" class="bid-strip" hidden>抢庄倒计时 <b id="bid-count">0</b> 秒</div>
+        <div id="dealer-banner" class="dealer-banner" hidden></div>
+        <div id="seats" class="seats"></div>
       </div>
 
-      <div class="felt">
-        <div id="seats" class="seats"></div>
-
-        <div id="my-area" class="my-area">
+      <div id="my-area" class="my-area">
+        <div id="my-seat" class="my-seat">
+          <div class="my-avatar">
+            <i class="my-turn-ring"></i>
+            <span id="my-avatar-face" class="avatar-face">我</span>
+            <i id="my-sec" class="seat-sec">…</i>
+          </div>
+          <div class="my-id">
+            <div class="my-name-row">
+              <span id="my-name" class="my-name">我</span>
+              <span id="my-badges" class="my-badges"></span>
+            </div>
+            <div class="my-numbers">
+              <span>筹码 <b id="my-chips">0</b></span>
+              <span>本局 <b id="my-bet">0</b></span>
+              <span>净分 <b id="my-net" class="my-net zero">0</b></span>
+            </div>
+          </div>
+        </div>
+        <div id="my-cards-block" class="my-cards-block">
           <div class="my-head">
             <span class="my-cap">我的牌</span>
             <span id="my-hand-name" class="hand-chip" hidden>—</span>
@@ -142,7 +177,7 @@
           <button id="btn-add-bot" class="btn btn-primary" type="button">+ 添加人机</button>
           <span id="bots-count" class="muted"></span>
         </div>
-        <p class="tips">人机在服务端自动出牌（看牌/跟注/加注/比牌都会），你断线它照打。最多凑满 6 个座位。</p>
+        <p class="tips">人机在服务端自动出牌（抢庄/看牌/跟注/加注/比牌都会），你断线它照打。最多凑满 15 个座位。</p>
       </section>
 
       <!-- 大厅：房间设置 -->
@@ -189,6 +224,18 @@
       <div class="turn-tip">
         <span id="turn-text">等待开始</span>
         <span id="turn-count" class="turn-count" hidden></span>
+      </div>
+
+      <!-- 抢庄阶段：不抢 / 抢庄 -->
+      <div id="bid-bar" class="bid-bar" hidden>
+        <div class="bid-top">
+          <span id="bid-status" class="bid-status">请选择是否抢庄</span>
+          <button id="btn-bid-look" class="btn btn-ghost btn-small" type="button">看牌</button>
+        </div>
+        <div id="bid-btns" class="bid-btns">
+          <button id="btn-bid-pass" class="btn btn-ghost btn-bid" type="button">不抢</button>
+          <button id="btn-bid-grab" class="btn btn-primary btn-bid" type="button">抢庄</button>
+        </div>
       </div>
 
       <div id="action-btns" class="action-btns" hidden>

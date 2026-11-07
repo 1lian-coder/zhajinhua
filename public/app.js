@@ -1,4 +1,4 @@
-/* =========================================================================
+﻿/* =========================================================================
  * 炸金花 · 前端逻辑（原生 JS，零依赖、零构建）
  *
  *  - 身份：localStorage 保存 { roomId, playerId, token }，刷新自动 /api/rejoin
@@ -29,6 +29,8 @@
     { key: 'maxPot', label: '总注封顶', def: 3000, min: 2, max: 10000000, step: 100 },
     { key: 'seeMultiplier', label: '看牌倍数', def: 2, min: 1, max: 4, step: 1 },
     { key: 'turnSeconds', label: '思考秒数', def: 45, min: 0, max: 600, step: 5 },
+    { key: 'dealerBid', label: '抢庄模式', type: 'bool', def: false },
+    { key: 'bidSeconds', label: '抢庄秒数', def: 10, min: 3, max: 60, step: 1 },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -175,6 +177,10 @@
   var penaltyFactor = 1;
   var modalDismiss = null;
   var lastPhase = '';
+  var seatMode = 'normal';       // 座位尺寸档位：normal / compact / mini
+  var seatLayoutTimer = null;    // 尺寸变化后重排座位的防抖计时器
+  var dealerBannerTimer = null;  // 定庄提示条淡出计时器
+  var lastDealerBannerKey = '';  // 避免重复弹「庄家：xxx」
 
   /* --------------------------------------------------------------- HTTP 封装 */
 
@@ -522,6 +528,14 @@
     resultSig = '';
     logsSig = '';
     lastPhase = '';
+    lastDealerBannerKey = '';
+    seatMode = 'normal';
+    if (dealerBannerTimer) {
+      clearTimeout(dealerBannerTimer);
+      dealerBannerTimer = null;
+    }
+    var bannerHome = $('dealer-banner');
+    if (bannerHome) { bannerHome.hidden = true; bannerHome.className = 'dealer-banner'; }
     showScreen('home');
     hideConn();
 
@@ -560,6 +574,14 @@
     lastOptions = [];
     busy = false;
     lastPhase = '';
+    lastDealerBannerKey = '';
+    seatMode = 'normal';
+    if (dealerBannerTimer) {
+      clearTimeout(dealerBannerTimer);
+      dealerBannerTimer = null;
+    }
+    var banner0 = $('dealer-banner');
+    if (banner0) { banner0.hidden = true; banner0.className = 'dealer-banner'; }
     showScreen('table');
     showConn('连接中…');
     connected = false;
@@ -860,9 +882,12 @@
 
   function applyState(st) {
     state = st;
-    clock.deadline = Number(st.turnDeadline) || 0;
+    var bidding = st.phase === 'bidding';
+    // 抢庄阶段用 bidDeadline，下注阶段用 turnDeadline；都和服务端 serverNow 成对使用
+    clock.deadline = Number(bidding ? st.bidDeadline : st.turnDeadline) || 0;
     clock.serverNow = Number(st.serverNow) || Date.now();
     clock.localAt = Date.now();
+    clock.bidding = bidding;
     if (currentScreen !== 'table') showScreen('table');
     if (st.roomId) $('room-id').textContent = st.roomId;
     render(st);
@@ -888,6 +913,207 @@
     var rem = clock.deadline - clock.serverNow - elapsed;
     if (rem < 0) rem = 0;
     return rem;
+  }
+
+  /* ------------------------------------------------- 椭圆牌桌：头像与座位定位 */
+
+  /** 筹码短格式：1.2w / 3.4k 之类，避免座位里数字太长 */
+  function fmtChips(n) {
+    n = Math.round(Number(n) || 0);
+    var abs = Math.abs(n);
+    if (abs >= 10000) {
+      var w = Math.round(n / 1000) / 10;
+      return String(w) + 'w';
+    }
+    return String(n);
+  }
+
+  /** 头像取昵称首字；「人机·阿福」这类取 · 后面的字 */
+  function initialOf(name) {
+    var s = String(name == null ? '' : name);
+    var dot = s.indexOf('\u00b7');
+    if (dot >= 0 && s.length > dot + 1) s = s.slice(dot + 1);
+    var first = s.charAt(0);
+    if (first >= '\ud800' && first <= '\udbff') first = s.substr(0, 2);
+    return first || '?';
+  }
+
+  /** 由名字/ID 派生一个稳定的头像底色（纯 CSS 渐变，无图片） */
+  function avatarBg(name, pid) {
+    var h = 0;
+    var s = String(pid || '') + '|' + String(name || '');
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+    var h2 = (h + 26) % 360;
+    return 'linear-gradient(140deg, hsl(' + h + ', 44%, 44%), hsl(' + h2 + ', 50%, 25%))';
+  }
+
+  /** 由对手人数决定座位尺寸档位（人数越多越小，保证 375px 不重叠） */
+  function seatModeFor(n) {
+    if (n <= 8) return 'normal';
+    if (n <= 11) return 'compact';
+    return 'mini';
+  }
+
+  /** 上半椭圆弧的角度跨度（度）：人越多越往两侧压一点，避免挤在顶部 */
+  function spanFor(n) {
+    if (n <= 2) return 180;
+    if (n <= 4) return 200;
+    if (n <= 6) return 214;
+    if (n <= 8) return 226;
+    if (n <= 11) return 234;
+    return 244;
+  }
+
+  /**
+   * 核心定位函数：把除"我"以外的玩家均匀摆到上半椭圆弧（左 → 顶 → 右）。
+   * 人数 ≥ 9 时用内外两圈交错（相邻座位半径不同），再跑一遍"碰撞松弛"：
+   * 任意两个座位只要矩形相交，就沿穿透较小的方向互相推开，并夹在牌桌区内。
+   * 这样 2~15 人、375/320 宽都能保证不重叠。
+   */
+  function layoutSeats() {
+    var stage = $('table-stage');
+    var wrap = $('seats');
+    if (!stage || !wrap) return;
+    var seats = wrap.querySelectorAll('.seat');
+    var n = seats.length;
+    if (!n) return;
+
+    var W = stage.clientWidth || 0;
+    var H = stage.clientHeight || 0;
+    if (!W || !H) return;
+
+    var sw = seats[0].offsetWidth || 60;
+    var sh = seats[0].offsetHeight || 60;
+    var cx = W / 2;
+    var cy = H / 2;
+    var rx = Math.max(36, W / 2 - sw / 2 - 2);
+    var ry = Math.max(26, H / 2 - sh / 2 - 2);
+
+    var span = spanFor(n) * Math.PI / 180.0;
+    var startA = Math.PI - (span - Math.PI) / 2;
+    var twoRings = n >= 9;
+    var slots = twoRings ? Math.ceil(n / 2) : n;
+    var innerScale = 0.72;
+    var step = span / slots;
+
+    var pos = [];
+    for (var i = 0; i < n; i++) {
+      var ring = twoRings ? (i % 2) : 0;
+      var slot = twoRings ? Math.floor(i / 2) : i;
+      var a = startA + (slot + 0.5) * step + (ring === 1 ? step / 2 : 0);
+      var rr = ring === 1 ? innerScale : 1;
+      pos.push({
+        x: cx + rx * rr * Math.cos(a),
+        y: cy + ry * rr * Math.sin(a),
+        w: sw,
+        h: sh
+      });
+    }
+
+    // 台面中央信息区（底池/单注/庄家）：座位不能压住它
+    // 只保护「底池」大字所在区域（中央块的透明留白不算）
+    var centerEl = document.querySelector('.pot-row') || $('table-center');
+    var obs = null;
+    if (centerEl) {
+      var sRect = stage.getBoundingClientRect();
+      var cRect = centerEl.getBoundingClientRect();
+      if (cRect.width > 0 && cRect.height > 0) {
+        obs = {
+          x: cRect.left - sRect.left + cRect.width / 2,
+          y: cRect.top - sRect.top + cRect.height / 2,
+          w: cRect.width + 4,
+          h: cRect.height + 4
+        };
+      }
+    }
+
+    // 碰撞松弛：最多 40 轮，两两矩形相交就推开；再避开中央信息区
+    var gap = 2;
+    for (var iter = 0; iter < 90; iter++) {
+      var moved = false;
+      for (var a1 = 0; a1 < pos.length; a1++) {
+        for (var b1 = a1 + 1; b1 < pos.length; b1++) {
+          var pa = pos[a1];
+          var pb = pos[b1];
+          var dx = pb.x - pa.x;
+          var dy = pb.y - pa.y;
+          var needX = (pa.w + pb.w) / 2 + gap - Math.abs(dx);
+          var needY = (pa.h + pb.h) / 2 + gap - Math.abs(dy);
+          if (needX > 0 && needY > 0) {
+            if (needX <= needY) {
+              var pushX = needX / 2 + 0.4;
+              var sx = dx === 0 ? (a1 % 2 ? 1 : -1) : (dx > 0 ? 1 : -1);
+              pa.x -= pushX * sx;
+              pb.x += pushX * sx;
+            } else {
+              var pushY = needY / 2 + 0.4;
+              var sy = dy === 0 ? (a1 % 2 ? 1 : -1) : (dy > 0 ? 1 : -1);
+              pa.y -= pushY * sy;
+              pb.y += pushY * sy;
+            }
+            moved = true;
+          }
+        }
+      }
+      if (obs) {
+        for (var oi = 0; oi < pos.length; oi++) {
+          var po = pos[oi];
+          var odx = po.x - obs.x;
+          var ody = po.y - obs.y;
+          var needOX = (po.w + obs.w) / 2 + 1 - Math.abs(odx);
+          var needOY = (po.h + obs.h) / 2 + 1 - Math.abs(ody);
+          if (needOX > 0 && needOY > 0) {
+            if (needOX <= needOY) {
+              po.x += (needOX + 0.4) * (odx >= 0 ? 1 : -1);
+            } else {
+              po.y += (needOY + 0.4) * (ody >= 0 ? 1 : -1);
+            }
+            moved = true;
+          }
+        }
+      }
+      // 夹在牌桌区内（座位要完整可见）
+      for (var k = 0; k < pos.length; k++) {
+        var p = pos[k];
+        if (p.x - p.w / 2 < 1) p.x = p.w / 2 + 1;
+        if (p.x + p.w / 2 > W - 1) p.x = W - p.w / 2 - 1;
+        if (p.y - p.h / 2 < 1) p.y = p.h / 2 + 1;
+        if (p.y + p.h / 2 > H - 1) p.y = H - p.h / 2 - 1;
+      }
+      if (!moved) break;
+    }
+
+    for (var m = 0; m < n; m++) {
+      seats[m].style.transform =
+        'translate(-50%,-50%) translate(' +
+        (Math.round(pos[m].x * 10) / 10) + 'px,' + (Math.round(pos[m].y * 10) / 10) + 'px)';
+    }
+  }
+
+  function scheduleSeatLayout() {
+    if (seatLayoutTimer) return;
+    seatLayoutTimer = setTimeout(function () {
+      seatLayoutTimer = null;
+      layoutSeats();
+    }, 120);
+  }
+
+  /** 定庄后短暂显示「庄家：xxx」，2 秒淡出 */
+  function showDealerBanner(name) {
+    var el = $('dealer-banner');
+    if (!el || !name) return;
+    el.textContent = '庄家：' + name;
+    el.hidden = false;
+    el.className = 'dealer-banner';
+    void el.offsetWidth;
+    el.className = 'dealer-banner show';
+    if (dealerBannerTimer) clearTimeout(dealerBannerTimer);
+    dealerBannerTimer = setTimeout(function () {
+      el.className = 'dealer-banner';
+      dealerBannerTimer = setTimeout(function () {
+        el.hidden = true;
+      }, 320);
+    }, 2000);
   }
 
   /* ------------------------------------------------------------------ 渲染 */
@@ -1056,6 +1282,7 @@
   }
 
   function render(st) {
+    var prevPhase = lastPhase;
     var phaseChanged = st.phase !== lastPhase;
     lastPhase = st.phase;
 
@@ -1081,6 +1308,16 @@
     handleTurnAlert(st);
     tick();
 
+    // 抢庄刚结束、进入下注阶段：台面中央闪一下「庄家：xxx」
+    if (st.phase === 'playing' && prevPhase === 'bidding' && st.dealerId) {
+      var dealerPlayer = findPlayer(st, st.dealerId);
+      var bannerKey = String(st.handNo || '') + '|' + st.dealerId + '|' + (st.updatedAt || '');
+      if (dealerPlayer && bannerKey !== lastDealerBannerKey) {
+        lastDealerBannerKey = bannerKey;
+        showDealerBanner(dealerPlayer.name);
+      }
+    }
+
     if (phaseChanged) {
       try {
         if (st.phase === 'showdown') {
@@ -1094,22 +1331,36 @@
         }
       } catch (e) { /* ignore */ }
     }
+    // 座位尺寸/档位切换后布局可能还没稳定，下一帧再校准一次
+    scheduleSeatLayout();
   }
 
   function renderHeader(st) {
     var players = st.players || [];
     var online = 0;
     for (var i = 0; i < players.length; i++) if (players[i].connected) online++;
+    var maxPlayers = st.maxPlayers || 15;
 
     $('room-id').textContent = st.roomId || (session && session.roomId) || '------';
-    $('online-text').textContent = online + '/' + (st.maxPlayers || 6) + ' 在线';
+    $('online-text').textContent = online + '/' + maxPlayers + ' 在线';
 
-    var phaseText = st.phase === 'lobby' ? '大厅' : (st.phase === 'showdown' ? '结算' : '进行中');
+    var phaseText = st.phase === 'lobby'
+      ? '大厅'
+      : st.phase === 'bidding'
+        ? '抢庄'
+        : st.phase === 'showdown' ? '结算' : '进行中';
     var tag = $('phase-tag');
     tag.textContent = phaseText;
     tag.className = 'phase-tag ' + (st.phase || '');
 
-    // 结算阶段服务端已把 pot 清零，顶栏显示本局最终底池
+    // 台面中央：底池/单注/局数/庄家头像
+    $('center-phase').textContent = st.phase === 'lobby'
+      ? '等待开局 · ' + players.length + '/' + maxPlayers
+      : st.phase === 'bidding'
+        ? '抢庄中'
+        : st.phase === 'showdown' ? '本局结束' : '下注中';
+
+    // 结算阶段服务端已把 pot 清零，顶栏/台面显示本局最终底池
     var potShow = st.pot;
     if (st.phase === 'showdown' && st.lastResult && st.lastResult.pot != null) potShow = st.lastResult.pot;
     $('stat-pot').textContent = String(potShow != null ? potShow : 0);
@@ -1121,6 +1372,33 @@
       if (players[j].isDealer) { dealer = players[j]; break; }
     }
     $('stat-dealer').textContent = dealer ? dealer.name : '—';
+    var dealerAvatar = $('dealer-avatar');
+    if (dealerAvatar) {
+      dealerAvatar.hidden = !dealer;
+      if (dealer) $('dealer-initial').textContent = initialOf(dealer.name);
+    }
+    var dealerRow = document.querySelector('.center-dealer');
+    if (dealerRow) dealerRow.hidden = !dealer && (st.phase === 'lobby' || st.phase === 'bidding');
+
+    // 台面边缘呼吸光：下注阶段跟着当前回合；抢庄阶段是蓝色脉冲
+    var oval = $('table-oval');
+    if (oval) {
+      var ovalCls = 'table-oval';
+      if (st.phase === 'playing' && st.turnId) ovalCls += ' turn-glow';
+      else if (st.phase === 'bidding') ovalCls += ' bidding-glow';
+      oval.className = ovalCls;
+    }
+
+    // 抢庄倒计时条
+    var bidding = st.phase === 'bidding';
+    var bidStrip = $('bid-strip');
+    if (bidStrip) {
+      bidStrip.hidden = !bidding;
+      if (bidding) {
+        var remBid = remainingMs();
+        $('bid-count').textContent = String(remBid == null ? 0 : Math.max(0, Math.ceil(remBid / 1000)));
+      }
+    }
   }
 
   function seatBadges(p, st) {
@@ -1128,6 +1406,13 @@
     if (p.isDealer) list.push({ cls: 'dealer', text: '庄' });
     if (p.isBot) list.push({ cls: 'bot', text: '人机' });
     if (p.isHost) list.push({ cls: 'host', text: '房主' });
+
+    // 抢庄阶段：先显示每个人实时选择（抢xN 蓝色 / 不抢 灰色 / 待选）
+    if (st.phase === 'bidding') {
+      if (p.bid == null) list.push({ cls: 'waiting', text: '待选' });
+      else if (p.bid === 0) list.push({ cls: 'pass', text: '不抢' });
+      else list.push({ cls: 'grab', text: '抢x' + p.bid });
+    }
 
     if (st.phase === 'lobby') {
       list.push({ cls: 'waiting', text: '等待中' });
@@ -1148,7 +1433,7 @@
       list.push({ cls: 'meng', text: '闷牌' });
     }
 
-    if (!p.connected) list.push({ cls: 'offline', text: '离线' });
+    if (!p.connected && !p.isBot) list.push({ cls: 'offline', text: '离线' });
     return list;
   }
 
@@ -1164,6 +1449,7 @@
     return wrap;
   }
 
+  /** 对手座位：头像圈 + 昵称 + 筹码/本局 + 状态徽标，由 layoutSeats 摆到椭圆弧上 */
   function renderSeats(st) {
     var wrap = $('seats');
     wrap.innerHTML = '';
@@ -1171,34 +1457,69 @@
 
     var players = st.players || [];
     var mid = meId();
+    var opps = [];
     for (var i = 0; i < players.length; i++) {
-      var p = players[i];
+      if (players[i].id !== mid) opps.push(players[i]);
+    }
+
+    var n = opps.length;
+    seatMode = seatModeFor(n);
+    wrap.className = 'seats mode-' + seatMode;
+
+    for (var k = 0; k < n; k++) {
+      var p = opps[k];
       var seat = document.createElement('div');
       var cls = 'seat';
-      if (p.id === mid) cls += ' me';
       if (p.isTurn) { cls += ' turn'; turnSeatEl = seat; }
       if (p.folded) cls += ' folded';
       if (p.allIn) cls += ' allin';
-      if (!p.connected) cls += ' offline';
+      if (!p.connected && !p.isBot) cls += ' offline';
+      if (p.isDealer) cls += ' dealer-seat';
       if (st.phase === 'playing' && !p.inHand) cls += ' idle';
+      if (st.phase === 'bidding' && p.bid == null) cls += ' undecided';
       seat.className = cls;
       seat.setAttribute('data-pid', p.id);
 
-      // 第一行：昵称 + 徽标
-      var top = document.createElement('div');
-      top.className = 'seat-top';
-      var nameEl = document.createElement('span');
+      // 头像圈（首字 + 纯 CSS 渐变），轮到时外面套一圈倒计时进度弧
+      var av = document.createElement('div');
+      av.className = 'seat-avatar';
+      var ring = document.createElement('i');
+      ring.className = 'turn-ring';
+      av.appendChild(ring);
+      var face = document.createElement('span');
+      face.className = 'avatar-face';
+      face.textContent = initialOf(p.name);
+      face.style.background = avatarBg(p.name, p.id);
+      av.appendChild(face);
+      var sec = document.createElement('i');
+      sec.className = 'seat-sec';
+      sec.textContent = '…';
+      av.appendChild(sec);
+      seat.appendChild(av);
+
+      // 昵称
+      var nameEl = document.createElement('div');
       nameEl.className = 'seat-name';
       nameEl.textContent = p.name || '玩家';
-      if (p.id === mid) {
-        var meTag = document.createElement('i');
-        meTag.className = 'me-tag';
-        meTag.textContent = '我';
-        nameEl.appendChild(meTag);
-      }
-      top.appendChild(nameEl);
+      seat.appendChild(nameEl);
 
-      var badges = document.createElement('span');
+      // 筹码 + 本局下注
+      var nums = document.createElement('div');
+      nums.className = 'seat-nums';
+      var chipsEl = document.createElement('span');
+      chipsEl.className = 'chips';
+      chipsEl.textContent = fmtChips(p.chips);
+      nums.appendChild(chipsEl);
+      if (st.phase !== 'lobby') {
+        var betEl = document.createElement('span');
+        betEl.className = 'bet';
+        betEl.textContent = '·' + fmtChips(p.bet || 0);
+        nums.appendChild(betEl);
+      }
+      seat.appendChild(nums);
+
+      // 状态徽标
+      var badges = document.createElement('div');
       badges.className = 'seat-badges';
       var badgeList = seatBadges(p, st);
       for (var b = 0; b < badgeList.length; b++) {
@@ -1207,93 +1528,71 @@
         bi.textContent = badgeList[b].text;
         badges.appendChild(bi);
       }
-      top.appendChild(badges);
-      seat.appendChild(top);
-
-      // 第二行：筹码 / 本局下注
-      var midRow = document.createElement('div');
-      midRow.className = 'seat-mid';
-      midRow.appendChild(seatStat(st.phase === 'lobby' ? '底注' : '本局', p.bet));
-      midRow.appendChild(seatStat('筹码', p.chips));
-      seat.appendChild(midRow);
-
-      // 第三行：净分 + 倒计时秒数
-      var bottom = document.createElement('div');
-      bottom.className = 'seat-bottom';
-      var netEl = document.createElement('span');
-      netEl.className = 'seat-net ' + (p.net > 0 ? 'pos' : (p.net < 0 ? 'neg' : 'zero'));
-      netEl.textContent = '净分 ' + fmtSigned(p.net);
-      bottom.appendChild(netEl);
-      if (p.isTurn && st.turnDeadline > 0) {
-        var sec = document.createElement('span');
-        sec.className = 'turn-sec';
-        sec.textContent = '…';
-        bottom.appendChild(sec);
-      }
-      seat.appendChild(bottom);
-
-      // 已公开的牌（结算 / 自己看过的牌只在"我的牌"区展示）
-      if (p.cards && p.cards.length === 3 && p.id !== mid) {
-        var cardsRow = document.createElement('div');
-        cardsRow.className = 'seat-cards';
-        for (var c = 0; c < p.cards.length; c++) cardsRow.appendChild(buildMiniCard(p.cards[c]));
-        seat.appendChild(cardsRow);
-      } else if (st.phase === 'playing' && p.inHand && !p.folded && p.id !== mid) {
-        var backsRow = document.createElement('div');
-        backsRow.className = 'seat-cards';
-        for (var k = 0; k < 3; k++) backsRow.appendChild(buildMiniBack());
-        seat.appendChild(backsRow);
-      }
-
-      // 当前回合进度条
-      if (p.isTurn && st.turnDeadline > 0) {
-        var bar = document.createElement('div');
-        bar.className = 'turn-bar';
-        var fill = document.createElement('i');
-        bar.appendChild(fill);
-        seat.appendChild(bar);
-      }
+      seat.appendChild(badges);
 
       wrap.appendChild(seat);
     }
 
-    // 大厅里把空位画出来，方便拉人
-    if (st.phase === 'lobby') {
-      var total = st.maxPlayers || 6;
-      var emptyCount = total - players.length;
-      if (emptyCount < 0) emptyCount = 0;
-      for (var e = 0; e < emptyCount; e++) {
-        var emptySeat = document.createElement('div');
-        emptySeat.className = 'seat empty';
-        var t = document.createElement('span');
-        t.className = 'empty-txt';
-        t.textContent = '空位';
-        emptySeat.appendChild(t);
-        wrap.appendChild(emptySeat);
-      }
-    }
+    // 立即测量并定位（座位数变化时尤其重要）
+    layoutSeats();
   }
 
   function renderMyArea(st) {
-    // 大厅阶段还没有发牌，不显示"我的牌"区域
     var inLobby = st.phase === 'lobby';
-    $('my-area').hidden = inLobby;
-    if (inLobby) return;
+    var me = findPlayer(st, meId());
 
+    // 我的座位信息（始终显示；大厅也显示，方便看自己筹码）
+    if (me) {
+      $('my-name').textContent = me.name || '我';
+      $('my-avatar-face').textContent = initialOf(me.name);
+      $('my-avatar-face').style.background = avatarBg(me.name, me.id);
+      $('my-chips').textContent = fmtChips(me.chips);
+      $('my-bet').textContent = fmtChips(me.bet || 0);
+      var myNet = $('my-net');
+      myNet.textContent = fmtSigned(me.net);
+      myNet.className = 'my-net ' + (me.net > 0 ? 'pos' : (me.net < 0 ? 'neg' : 'zero'));
+
+      var myBadges = $('my-badges');
+      myBadges.innerHTML = '';
+      var mb = seatBadges(me, st);
+      for (var i = 0; i < mb.length; i++) {
+        var bi = document.createElement('span');
+        bi.className = 'badge ' + mb[i].cls;
+        bi.textContent = mb[i].text;
+        myBadges.appendChild(bi);
+      }
+
+      var myTurn = !!(st.phase === 'playing' && st.turnId === me.id);
+      $('my-seat').className = 'my-seat' +
+        (myTurn ? ' turn' : '') +
+        (me.isDealer && st.phase !== 'lobby' ? ' dealer' : '') +
+        (me.folded ? ' folded' : '') +
+        (me.allIn ? ' allin' : '') +
+        (!me.connected && !me.isBot ? ' offline' : '');
+      if (!myTurn) {
+        var mySec = $('my-sec');
+        if (mySec) mySec.textContent = '…';
+      }
+    }
+
+    // 大厅还没发牌，隐藏"我的牌"（保留我的座位信息）
+    $('my-cards-block').hidden = inLobby;
     var cards = (st.myCards && st.myCards.length === 3) ? st.myCards : null;
-    var sig = (cards ? cards.map(function (c) { return c.id; }).join('|') : 'BACK') +
-      '#' + st.phase + '#' + (st.inHand ? 1 : 0) + '#' + (st.mySeen ? 1 : 0);
 
-    if (sig !== mySig) {
-      mySig = sig;
-      buildMyCards(cards);
+    if (!inLobby) {
+      var sig = (cards ? cards.map(function (c) { return c.id; }).join('|') : 'BACK') +
+        '#' + st.phase + '#' + (st.inHand ? 1 : 0) + '#' + (st.mySeen ? 1 : 0);
+      if (sig !== mySig) {
+        mySig = sig;
+        buildMyCards(cards);
+      }
     }
 
     var nameEl = $('my-hand-name');
     if (st.myHandName) {
       nameEl.textContent = st.myHandName;
       nameEl.hidden = false;
-    } else if (st.mySeen && st.phase === 'playing') {
+    } else if (st.mySeen && (st.phase === 'playing' || st.phase === 'bidding')) {
       nameEl.textContent = '已看牌';
       nameEl.hidden = false;
     } else {
@@ -1303,6 +1602,11 @@
     var hint = '';
     if (st.phase === 'lobby') {
       hint = '等待开局 · 房主可在下方设置规则';
+    } else if (st.phase === 'bidding') {
+      if (!st.inHand) hint = '本局未参与 · 等待定庄';
+      else if (st.myBid == null) hint = '抢庄阶段 · 先看牌，再选「不抢」或「抢庄」倍数';
+      else if (st.myBid === 0) hint = '已选「不抢」· 等待其他玩家';
+      else hint = '已选「抢庄 x' + st.myBid + '」· 等待其他玩家';
     } else if (st.phase === 'showdown') {
       hint = cards ? '本局已结束，牌面见下方结算' : '本局已结束，见下方结算';
     } else if (!st.inHand) {
@@ -1437,9 +1741,9 @@
     if (sig === botsSig) {
       // 只更新按钮可用态
       var addBtn = $('btn-add-bot');
-      if (addBtn) addBtn.disabled = !isHost || players.length >= (st.maxPlayers || 6) || busy;
+      if (addBtn) addBtn.disabled = !isHost || players.length >= (st.maxPlayers || 15) || busy;
       var cnt = $('bots-count');
-      if (cnt) cnt.textContent = players.length + '/' + (st.maxPlayers || 6) + ' 个座位';
+      if (cnt) cnt.textContent = players.length + '/' + (st.maxPlayers || 15) + ' 个座位';
       return;
     }
     botsSig = sig;
@@ -1478,14 +1782,14 @@
 
     var addBtn2 = $('btn-add-bot');
     if (addBtn2) {
-      addBtn2.disabled = !isHost || players.length >= (st.maxPlayers || 6);
+      addBtn2.disabled = !isHost || players.length >= (st.maxPlayers || 15);
       addBtn2.textContent = isHost ? '+ 添加人机' : '只有房主能添加人机';
     }
     var cnt2 = $('bots-count');
-    if (cnt2) cnt2.textContent = players.length + '/' + (st.maxPlayers || 6) + ' 个座位';
+    if (cnt2) cnt2.textContent = players.length + '/' + (st.maxPlayers || 15) + ' 个座位';
     var hint = $('bots-hint');
     if (hint) {
-      hint.textContent = humans <= 1 ? '一个人也能玩：加人机开局吧' : '满员时人机自动坐冷板凳之外';
+      hint.textContent = humans <= 1 ? '一个人也能玩：加人机开局吧' : '人机会自动出牌，适合凑人数';
     }
   }
 
@@ -1883,6 +2187,13 @@
       else if (o.type === 'allin') allinOpt = o;
     }
 
+    // 出现「孤注一掷」时 6 个按钮排一行，避免换行
+    var actionsEl = $('action-btns');
+    if (actionsEl) {
+      if (allinOpt) actionsEl.classList.add('six');
+      else actionsEl.classList.remove('six');
+    }
+
     var canLook = !!st.canLook;
     var seen = !!st.mySeen;
 
@@ -1913,9 +2224,57 @@
     updateAct($('act-fold'), busy || !foldOpt, '弃牌', '本局结束');
   }
 
+  /** 抢庄阶段的底部区：两个大按钮 + 「已选择」状态；看牌按钮始终可用（canLook） */
+  function updateBidUI(st) {
+    var status = $('bid-status');
+    var btns = $('bid-btns');
+    var passBtn = $('btn-bid-pass');
+    var grabBtn = $('btn-bid-grab');
+    var lookBtn = $('btn-bid-look');
+
+    var inHand = !!st.inHand;
+    var myBid = st.myBid;
+    var pending = 0;
+    var players = st.players || [];
+    for (var i = 0; i < players.length; i++) {
+      if (players[i].inHand && !players[i].folded && players[i].bid == null) pending++;
+    }
+
+    if (status) {
+      status.className = 'bid-status';
+      if (!inHand) {
+        status.textContent = '本局未参与 · 等待定庄';
+      } else if (myBid == null) {
+        if (busy) {
+          status.textContent = '提交中…';
+        } else {
+          status.textContent = '请选择：抢庄（选倍数）或不抢';
+        }
+      } else {
+        status.className = 'bid-status choice';
+        var label = myBid === 0 ? '已选择：不抢' : '已选择：抢庄 x' + myBid;
+        if (pending > 0) {
+          status.textContent = label + ' · 等待其他玩家（还剩 ' + pending + ' 人未选）…';
+        } else {
+          status.textContent = label + ' · 正在定庄…';
+        }
+      }
+    }
+
+    if (btns) btns.hidden = !(inHand && myBid == null);
+    if (passBtn) passBtn.disabled = busy || !inHand || myBid != null;
+    if (grabBtn) grabBtn.disabled = busy || !inHand || myBid != null;
+
+    if (lookBtn) {
+      lookBtn.disabled = busy || !st.canLook;
+      lookBtn.textContent = st.mySeen ? '已看牌' : '看牌';
+    }
+  }
+
   function renderBottom(st) {
     var actions = $('action-btns');
     var primary = $('btn-bottom');
+    var bidBar = $('bid-bar');
     var tipText = '';
     var mid = meId();
     var myTurn = !!(st.turnId && st.turnId === mid);
@@ -1923,30 +2282,42 @@
     var countEl = $('turn-count');
     countEl.hidden = true;
 
-    if (st.phase === 'playing') {
-      actions.hidden = false;
+    if (st.phase === 'bidding') {
+      actions.hidden = true;
       primary.hidden = true;
-      actions.className = 'action-btns' + (myTurn ? ' active' : '');
-
-      if (!st.inHand) tipText = '本局未参与，等待下一局';
-      else if (st.folded) tipText = '你已弃牌，等待本局结束';
-      else if (myTurn) tipText = '轮到你操作';
-      else if (turnPlayer) tipText = '等待 ' + turnPlayer.name + ' 操作';
-      else tipText = '等待中';
-    } else if (st.phase === 'showdown') {
-      actions.hidden = true;
-      primary.hidden = false;
-      primary.disabled = busy;
-      primary.textContent = '下一局';
-      tipText = '本局结束 · 准备下一局';
+      if (bidBar) bidBar.hidden = false;
+      updateBidUI(st);
+      if (!st.inHand) tipText = '本局未参与 · 抢庄中';
+      else if (st.myBid == null) tipText = '抢庄中 · 请选择是否抢庄';
+      else tipText = '已选择 · 等待其他玩家…';
     } else {
-      actions.hidden = true;
-      primary.hidden = false;
-      var n = (st.players || []).length;
-      var enough = n >= 2;
-      primary.disabled = busy || !enough;
-      primary.textContent = enough ? '开始游戏' : ('等待玩家（' + n + '/2）');
-      tipText = (st.hostId === mid ? '你是房主' : '等待房主开局') + ' · ' + n + ' 人在房间';
+      if (bidBar) bidBar.hidden = true;
+      if (st.phase === 'playing') {
+        actions.hidden = false;
+        primary.hidden = true;
+        actions.className = 'action-btns' + (myTurn ? ' active' : '');
+
+        if (!st.inHand) tipText = '本局未参与，等待下一局';
+        else if (st.folded) tipText = '你已弃牌，等待本局结束';
+        else if (st.allIn) tipText = '孤注一掷中 · 等开牌';
+        else if (myTurn) tipText = '轮到你操作';
+        else if (turnPlayer) tipText = '等待 ' + turnPlayer.name + ' 操作';
+        else tipText = '等待中';
+      } else if (st.phase === 'showdown') {
+        actions.hidden = true;
+        primary.hidden = false;
+        primary.disabled = busy;
+        primary.textContent = '下一局';
+        tipText = '本局结束 · 准备下一局';
+      } else {
+        actions.hidden = true;
+        primary.hidden = false;
+        var n = (st.players || []).length;
+        var enough = n >= 2;
+        primary.disabled = busy || !enough;
+        primary.textContent = enough ? '开始游戏' : ('等待玩家（' + n + '/2）');
+        tipText = (st.hostId === mid ? '你是房主' : '等待房主开局') + ' · ' + n + ' 人在房间';
+      }
     }
 
     $('turn-text').textContent = tipText;
@@ -1972,24 +2343,44 @@
     var st = state;
     if (st.phase === 'showdown' && st.nextHandAt) updateAutoNextText();
     var rem = remainingMs();
-    var total = ((st.config && st.config.turnSeconds) || 0) * 1000;
-    var showCount = st.phase === 'playing' && st.turnDeadline > 0 && rem != null;
-
     var countEl = $('turn-count');
     var tip = $('turn-text');
 
+    // 抢庄阶段：台面上方倒计时
+    if (st.phase === 'bidding') {
+      var bidSec = rem == null ? 0 : Math.max(0, Math.ceil(rem / 1000));
+      var bidCount = $('bid-count');
+      if (bidCount) bidCount.textContent = String(bidSec);
+      if (countEl) countEl.hidden = true;
+      if (tip) {
+        if (bidSec <= 3) tip.classList.add('urgent');
+        else tip.classList.remove('urgent');
+      }
+      if (st.myBid == null) updateBidUI(st);
+      return;
+    }
+
+    var total = ((st.config && st.config.turnSeconds) || 0) * 1000;
+    var showCount = st.phase === 'playing' && st.turnDeadline > 0 && rem != null;
+
     if (showCount) {
       var sec = Math.max(0, Math.ceil(rem / 1000));
+      var pctNum = total > 0 ? Math.max(0, Math.min(1, rem / total)) : 0;
       countEl.textContent = sec + 's';
       countEl.hidden = false;
       if (turnSeatEl) {
-        var fill = turnSeatEl.querySelector('.turn-bar i');
-        if (fill) {
-          var pct = total > 0 ? Math.max(0, Math.min(1, rem / total)) * 100 : 0;
-          fill.style.width = pct.toFixed(2) + '%';
-        }
-        var secNode = turnSeatEl.querySelector('.turn-sec');
+        var ring = turnSeatEl.querySelector('.turn-ring');
+        if (ring) ring.style.setProperty('--p', String(pctNum));
+        var secNode = turnSeatEl.querySelector('.seat-sec');
         if (secNode) secNode.textContent = sec + 's';
+      }
+      // 我的回合：我的头像圈也走进度
+      var mySeat = $('my-seat');
+      if (mySeat && mySeat.className.indexOf('turn') >= 0) {
+        var myRing = mySeat.querySelector('.my-turn-ring');
+        if (myRing) myRing.style.setProperty('--p', String(pctNum));
+        var mySec = $('my-sec');
+        if (mySec) mySec.textContent = sec + 's';
       }
       if (st.turnId && st.turnId === meId()) {
         if (rem <= 5000) tip.classList.add('urgent');
@@ -2009,6 +2400,7 @@
     busy = !!v;
     if (state) {
       updateActionButtons(state);
+      if (state.phase === 'bidding') updateBidUI(state);
       // 结算/大厅的底部主按钮也要跟着恢复，否则结算状态下点「下一局」会被永久禁用
       var primary = $('btn-bottom');
       if (primary && !primary.hidden) {
@@ -2080,6 +2472,39 @@
   function doCall() {
     if (!optionOf('call')) { toast('现在不能跟注', 'err'); return; }
     postAction('call', {});
+  }
+
+  /** 抢庄阶段：提交选择（0=不抢，1~4=倍数），结果由 SSE 推送回来 */
+  function doBid(bid) {
+    if (!session || busy) return;
+    postAction('bid', { bid: bid });
+  }
+
+  function openBidGrab() {
+    if (!session || busy) return;
+    var html = '<div class="opt-list">';
+    for (var i = 1; i <= 4; i++) {
+      html += '<button type="button" class="opt-btn" data-bid="' + i + '">' +
+        '<span class="opt-main">抢庄 x' + i + '</span>' +
+        '<span class="opt-cost">倍数为 ' + i + ' 倍</span>' +
+        '</button>';
+    }
+    html += '</div><div class="modal-btns">' +
+      '<button type="button" class="btn btn-ghost" data-close="1">取消</button></div>';
+
+    var root = showModal(html, { title: '选择抢庄倍数' });
+    var btns = root.querySelectorAll('.opt-btn');
+    for (var b = 0; b < btns.length; b++) {
+      (function (btn) {
+        btn.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var bid = Number(btn.getAttribute('data-bid'));
+          closeModal();
+          if (!bid) return;
+          doBid(bid);
+        });
+      })(btns[b]);
+    }
   }
 
   function doAllin() {
@@ -2286,6 +2711,20 @@
     $('btn-save-config').addEventListener('click', saveConfig);
     $('btn-add-bot').addEventListener('click', doAddBot);
     $('btn-save-room-pin').addEventListener('click', saveRoomPin);
+
+    // 抢庄阶段操作
+    $('btn-bid-pass').addEventListener('click', function () {
+      if (this.disabled) return;
+      doBid(0);
+    });
+    $('btn-bid-grab').addEventListener('click', function () {
+      if (this.disabled) return;
+      openBidGrab();
+    });
+    $('btn-bid-look').addEventListener('click', function () {
+      if (this.disabled) return;
+      doLook();
+    });
     $('join-pin').addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') { ev.preventDefault(); doJoin(); }
     });
@@ -2342,6 +2781,10 @@
         fn();
       }
     });
+
+    // 屏幕旋转 / 宽度变化后重排椭圆座位
+    window.addEventListener('resize', scheduleSeatLayout);
+    window.addEventListener('orientationchange', function () { setTimeout(scheduleSeatLayout, 200); });
 
     window.addEventListener('online', function () {
       if (session && !connected) scheduleVerify(500);
