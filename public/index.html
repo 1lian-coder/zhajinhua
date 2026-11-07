@@ -96,8 +96,18 @@
         <p class="tips">房间还在的话，可以恢复原来的身份和牌局。</p>
       </div>
 
+      <div class="box disclaimer-box" id="disclaimer">
+        <div class="box-head"><h2>免责声明</h2></div>
+        <p class="disclaimer-text">
+          本站只是一个供朋友之间互动娱乐的小网站：<b>严禁用于任何形式的赌博、金钱交易或牟利</b>。
+          游戏中的筹码都是虚拟的，<b>没有实际价值，不能充值、提现或兑换</b>。
+          请勿利用本站组织或参与赌博，使用者因违规使用产生的一切后果由使用者自行承担，与开发者无关。
+        </p>
+      </div>
+
       <footer class="home-foot">
         <p>纯网页 · 无需下载 · 无第三方库 · 数据只存在你的服务端</p>
+        <p class="home-legal">仅供朋友娱乐 · 禁止赌博 · 虚拟筹码无现金价值</p>
       </footer>
     </div>
   </section>
@@ -114,7 +124,6 @@
         <span id="phase-tag" class="phase-tag">大厅</span>
       </div>
       <div class="topbar-actions">
-        <button id="btn-chat" class="icon-btn" type="button" title="发言">💬</button>
         <button id="btn-sound" class="icon-btn" type="button" title="轮到我的提醒开关">🔊</button>
         <button id="btn-invite" class="icon-btn" type="button" title="复制邀请链接">邀请</button>
         <button id="btn-exit" class="icon-btn danger" type="button" title="退出房间">退出</button>
@@ -153,32 +162,60 @@
         <div id="spectator-banner" class="spectator-banner" hidden>
           👁 观战中 · <b id="spectator-count">1</b> 人围观 · 只能看不能出牌
         </div>
-        <div id="my-seat" class="my-seat">
-          <div class="my-avatar">
-            <i class="my-turn-ring"></i>
-            <span id="my-avatar-face" class="avatar-face">我</span>
-            <i id="my-sec" class="seat-sec">…</i>
+
+        <!-- 我的信息 + 操作：弃/看 | 筹码+牌 | 比/全 -->
+        <div class="play-row">
+          <div class="round-col left">
+            <button id="act-fold" class="round-btn rb-fold" type="button">
+              <span class="act-main">弃</span><span class="act-sub">弃牌</span>
+            </button>
+            <button id="act-look" class="round-btn rb-look" type="button">
+              <span class="act-main">看</span><span class="act-sub">看牌</span>
+            </button>
           </div>
-          <div class="my-id">
-            <div class="my-name-row">
-              <span id="my-name" class="my-name">我</span>
-              <span id="my-badges" class="my-badges"></span>
+          <div class="play-mid">
+            <div id="chip-bar" class="chip-bar" hidden>
+              <div id="chip-row" class="chip-row"></div>
+              <div class="base-score">底分 <b id="base-score-val">10</b></div>
             </div>
-            <div class="my-numbers">
-              <span>筹码 <b id="my-chips">0</b></span>
-              <span>本局 <b id="my-bet">0</b></span>
-              <span>净分 <b id="my-net" class="my-net zero">0</b></span>
+            <div id="my-cards-block" class="my-cards-block">
+              <div class="my-head">
+                <span class="my-cap">我的牌</span>
+                <span id="my-hand-name" class="hand-chip" hidden>—</span>
+              </div>
+              <div id="my-cards" class="my-cards"></div>
+              <div id="my-hint" class="my-hint">等待进入牌局</div>
             </div>
+            <div id="my-seat" class="my-seat">
+              <div class="my-avatar">
+                <i class="my-turn-ring"></i>
+                <span id="my-avatar-face" class="avatar-face">我</span>
+                <i id="my-sec" class="seat-sec">…</i>
+              </div>
+              <div class="my-id">
+                <div class="my-name-row">
+                  <span id="my-name" class="my-name">我</span>
+                  <span id="my-badges" class="my-badges"></span>
+                </div>
+                <div class="my-numbers">
+                  <span>筹码 <b id="my-chips">0</b></span>
+                  <span>本局 <b id="my-bet">0</b></span>
+                  <span>净分 <b id="my-net" class="my-net zero">0</b></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="round-col right">
+            <button id="act-compare" class="round-btn rb-compare" type="button">
+              <span class="act-main">比</span><span class="act-sub">比牌</span>
+            </button>
+            <button id="act-allin" class="round-btn rb-allin" type="button" hidden>
+              <span class="act-main">全</span><span class="act-sub">全下</span>
+            </button>
           </div>
         </div>
-        <div id="my-cards-block" class="my-cards-block">
-          <div class="my-head">
-            <span class="my-cap">我的牌</span>
-            <span id="my-hand-name" class="hand-chip" hidden>—</span>
-          </div>
-          <div id="my-cards" class="my-cards"></div>
-          <div id="my-hint" class="my-hint">等待进入牌局</div>
-        </div>
+
+        <button id="btn-chat" class="chat-round" type="button" title="聊天">💬</button>
       </div>
 
       <!-- 大厅：人机玩家管理 -->
@@ -253,14 +290,8 @@
         </div>
       </div>
 
-      <div id="action-btns" class="action-btns" hidden>
-        <button id="act-look" class="act act-look" type="button"><span class="act-main">看牌</span><span class="act-sub">不结束回合</span></button>
-        <button id="act-call" class="act act-call" type="button"><span class="act-main">跟注</span><span class="act-sub">下注</span></button>
-        <button id="act-raise" class="act act-raise" type="button"><span class="act-main">加注</span><span class="act-sub">选金额</span></button>
-        <button id="act-compare" class="act act-compare" type="button"><span class="act-main">比牌</span><span class="act-sub">输者出局</span></button>
-        <button id="act-allin" class="act act-allin" type="button" hidden><span class="act-main">孤注一掷</span><span class="act-sub">全下开牌</span></button>
-        <button id="act-fold" class="act act-fold" type="button"><span class="act-main">弃牌</span><span class="act-sub">本局结束</span></button>
-      </div>
+      <!-- 兼容占位：动作按钮已移到 my-area 的圆形键 -->
+      <div id="action-btns" class="action-btns" hidden></div>
 
       <button id="btn-bottom" class="btn btn-primary btn-big" type="button" hidden>开始游戏</button>
     </footer>

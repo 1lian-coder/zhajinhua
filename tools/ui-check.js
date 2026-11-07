@@ -468,10 +468,10 @@ async function main() {
         }
       }
 
-      // 跟注
+      // 跟注：新界面用筹码按钮（.chip[data-chip="call"]）
       const called = await cdp.eval(`(() => {
-        const b = document.getElementById('act-call');
-        if (b && !b.hidden && !b.disabled) { b.click(); return 'called'; }
+        const b = document.querySelector('#chip-row .chip[data-chip="call"]');
+        if (b && !b.disabled) { b.click(); return 'called'; }
         return 'no-call';
       })()`);
       await sleep(700);

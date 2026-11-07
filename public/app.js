@@ -996,25 +996,31 @@
     var rx = Math.max(36, W / 2 - sw / 2 - 2);
     var ry = Math.max(26, H / 2 - sh / 2 - 2);
 
-    var span = spanFor(n) * Math.PI / 180.0;
-    var startA = Math.PI - (span - Math.PI) / 2;
-    var twoRings = n >= 9;
-    var slots = twoRings ? Math.ceil(n / 2) : n;
-    var innerScale = 0.72;
-    var step = span / slots;
-
+    // 竖版牌桌：对手分列左右两侧（上 → 下），我的区域在底部
+    var felt = document.getElementById('table-oval');
+    var feltW = felt ? felt.offsetWidth : W * 0.72;
+    var leftX = Math.max(sw / 2 + 2, cx - feltW / 2 + sw * 0.16);
+    var rightX = Math.min(W - sw / 2 - 2, cx + feltW / 2 - sw * 0.16);
+    var topPad = sh / 2 + 6;
+    var bottomPad = H - sh / 2 - 6;
+    var leftN = Math.ceil(n / 2);
+    var rightN = n - leftN;
     var pos = [];
-    for (var i = 0; i < n; i++) {
-      var ring = twoRings ? (i % 2) : 0;
-      var slot = twoRings ? Math.floor(i / 2) : i;
-      var a = startA + (slot + 0.5) * step + (ring === 1 ? step / 2 : 0);
-      var rr = ring === 1 ? innerScale : 1;
-      pos.push({
-        x: cx + rx * rr * Math.cos(a),
-        y: cy + ry * rr * Math.sin(a),
-        w: sw,
-        h: sh
-      });
+    if (n === 1) {
+      pos.push({ x: rightX, y: topPad + (bottomPad - topPad) * 0.32, w: sw, h: sh });
+    } else {
+      for (var li = 0; li < leftN; li++) {
+        var ly = leftN === 1
+          ? topPad + (bottomPad - topPad) * 0.5
+          : topPad + (bottomPad - topPad) * (li / (leftN - 1));
+        pos.push({ x: leftX, y: ly, w: sw, h: sh });
+      }
+      for (var ri = 0; ri < rightN; ri++) {
+        var ry2 = rightN === 1
+          ? topPad + (bottomPad - topPad) * 0.5
+          : topPad + (bottomPad - topPad) * (ri / (rightN - 1));
+        pos.push({ x: rightX, y: ry2, w: sw, h: sh });
+      }
     }
 
     // 台面中央信息区（底池/单注/庄家）：座位不能压住它
@@ -1625,7 +1631,10 @@
     if (st.phase === 'showdown' && st.lastResult && st.lastResult.pot != null) potShow = st.lastResult.pot;
     $('stat-pot').textContent = String(potShow != null ? potShow : 0);
     $('stat-stake').textContent = String(st.stake != null ? st.stake : 0);
-    $('stat-hand').textContent = String(st.handNo || 0);
+    var sessionTarget = (st.config && st.config.sessionHands) || 0;
+    $('stat-hand').textContent = sessionTarget > 0
+      ? String(st.handNo || 0) + '/' + sessionTarget
+      : String(st.handNo || 0);
 
     var dealer = null;
     for (var j = 0; j < players.length; j++) {
@@ -2584,30 +2593,74 @@
     var seen = !!st.mySeen;
 
     updateAct($('act-look'), busy || !canLook,
-      seen ? '已看牌' : '看牌',
-      seen ? '牌面已开' : '不结束回合');
-
-    updateAct($('act-call'), busy || !callOpt,
-      callOpt ? ('跟注 ' + callOpt.cost) : '跟注',
-      callOpt ? '下注' : '不可用');
+      seen ? '已看' : '看',
+      seen ? '已看牌' : '看牌');
 
     var allinBtn = $('act-allin');
     if (allinBtn) allinBtn.hidden = !allinOpt;
     updateAct(allinBtn, busy || !allinOpt,
-      allinOpt ? '孤注一掷 ' + allinOpt.cost : '孤注一掷',
-      allinOpt ? '全下留场开牌' : '不可用');
+      '全',
+      allinOpt ? ('全下' + allinOpt.cost) : '不可用');
 
-    var raiseSub = '不可用';
+    var raiseSub = '—';
     if (raiseOpt && raiseOpt.raises && raiseOpt.raises.length) {
       raiseSub = '到 ' + raiseOpt.raises[raiseOpt.raises.length - 1].to;
     }
-    updateAct($('act-raise'), busy || !raiseOpt, '加注', raiseSub);
-
     updateAct($('act-compare'), busy || !compareOpt,
-      compareOpt ? ('比牌 ' + compareOpt.cost) : '比牌',
-      compareOpt ? '输者出局' : '不可用');
+      '比',
+      compareOpt ? ('比牌 ' + compareOpt.cost) : '不可用');
 
-    updateAct($('act-fold'), busy || !foldOpt, '弃牌', '本局结束');
+    updateAct($('act-fold'), busy || !foldOpt, '弃', '弃牌');
+
+    // 筹码下注条：跟注 + 各加注档位（按底分/单注推导）
+    renderChips(st, callOpt, raiseOpt);
+    var baseEl = $('base-score-val');
+    if (baseEl) baseEl.textContent = String((st.config && st.config.ante) || 0);
+  }
+
+  /** 筹码按钮：跟注额 + 加注档位，点一下直接下注 */
+  function renderChips(st, callOpt, raiseOpt) {
+    var bar = $('chip-bar');
+    var row = $('chip-row');
+    if (!bar || !row) return;
+    var show = st.phase === 'playing' && st.inHand && !st.folded &&
+      !st.allIn && (callOpt || raiseOpt);
+    if (!show) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    var html = '';
+    if (callOpt) {
+      html += '<button class="chip chip-call" type="button" data-chip="call">' +
+        '<b>' + esc(callOpt.cost) + '</b><i>跟注</i></button>';
+    }
+    if (raiseOpt && raiseOpt.raises) {
+      for (var i = 0; i < raiseOpt.raises.length; i++) {
+        var r = raiseOpt.raises[i];
+        html += '<button class="chip chip-raise' + (i > 0 ? ' chip-raise-2' : '') + '"' +
+          ' type="button" data-chip="raise" data-to="' + esc(r.to) + '">' +
+          '<b>' + esc(r.to) + '</b><i>加到</i></button>';
+      }
+    }
+    row.innerHTML = html;
+    var btns = row.querySelectorAll('[data-chip]');
+    for (var k = 0; k < btns.length; k++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          if (busy) return;
+          var kind = btn.getAttribute('data-chip');
+          if (kind === 'call') {
+            if (!optionOf('call')) { toast('现在不能跟注', 'err'); return; }
+            postAction('call', {});
+          } else {
+            var to = Number(btn.getAttribute('data-to'));
+            if (!to) return;
+            postAction('raise', { to: to });
+          }
+        });
+      })(btns[k]);
+    }
   }
 
   /** 抢庄阶段的底部区：两个大按钮 + 「已选择」状态；看牌按钮始终可用（canLook） */
@@ -3140,14 +3193,6 @@
     $('act-look').addEventListener('click', function () {
       if ($('act-look').disabled) return;
       doLook();
-    });
-    $('act-call').addEventListener('click', function () {
-      if ($('act-call').disabled) return;
-      doCall();
-    });
-    $('act-raise').addEventListener('click', function () {
-      if ($('act-raise').disabled) return;
-      doRaise();
     });
     $('act-compare').addEventListener('click', function () {
       if ($('act-compare').disabled) return;
