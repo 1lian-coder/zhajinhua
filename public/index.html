@@ -79,6 +79,17 @@
         </label>
       </div>
 
+      <!-- 实时牌局：观战 -->
+      <div class="box" id="rooms-box">
+        <div class="box-head">
+          <h2>实时牌局</h2>
+          <button id="btn-refresh-rooms" class="link-btn" type="button">刷新</button>
+        </div>
+        <div id="rooms-list" class="rooms-list">
+          <p class="tips" id="rooms-empty">正在读取…</p>
+        </div>
+      </div>
+
       <div class="box resume-box" id="resume-box" hidden>
         <div class="box-head"><h2>上次的房间</h2></div>
         <button id="btn-resume" class="btn btn-ghost btn-big" type="button">继续进入 <span id="resume-room" class="mono"></span></button>
@@ -139,6 +150,9 @@
       </div>
 
       <div id="my-area" class="my-area">
+        <div id="spectator-banner" class="spectator-banner" hidden>
+          👁 观战中 · <b id="spectator-count">1</b> 人围观 · 只能看不能出牌
+        </div>
         <div id="my-seat" class="my-seat">
           <div class="my-avatar">
             <i class="my-turn-ring"></i>

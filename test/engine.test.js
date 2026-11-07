@@ -16,7 +16,7 @@ const {
   cardLabel,
   TYPE
 } = require('../lib/cards');
-const { Room } = require('../lib/engine');
+const { Room, MAX_SPECTATORS: MAX_SPECTATORS_TEST } = require('../lib/engine');
 const { BOT_NAMES, handScore, decideBotAction } = require('../lib/bot');
 
 // ---------------------------------------------------------------- 工具
@@ -724,7 +724,77 @@ test('掉线托管：真人断线后超宽限期由系统代打，牌局不卡�
   assert.strictEqual(room.botTick(Date.now()), false, '在线真人的回合绝不代打');
 });
 
-// ------------------------------------------------------------ 抢庄
+// ------------------------------------------------------------ 观战
+
+test('观战：不占座位、不能操作、看不到暗牌、开牌后可见', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  const spec = room.addSpectator('观众甲');
+
+  assert.strictEqual(room.players.size, 3, '观战者不占玩家座位');
+  assert.strictEqual(room.spectators.size, 1);
+  assert.notStrictEqual(spec.id, a);
+
+  room.startHand(a);
+
+  // 观战者不能执行任何动作
+  assert.throws(() => room.act(spec.id, 'call', {}), /玩家不存在/);
+  assert.throws(() => room.look(spec.id), /玩家不存在/);
+  assert.throws(() => room.setBid(spec.id, 2), /玩家不存在/);
+
+  // 观战视角：看不到任何暗牌
+  const v = room.serialize(spec.id);
+  assert.strictEqual(v.spectating, true);
+  assert.strictEqual(v.spectatorCount, 1);
+  assert.strictEqual(v.myCards, null, '观战者看不到自己的牌（没有牌）');
+  for (const p of v.players) {
+    assert.strictEqual(p.cards, null, `${p.name} 的暗牌不该下发给观战者`);
+    assert.strictEqual(p.handName, null);
+  }
+
+  // 玩家视角确认观战者在列表里
+  const pv = room.serialize(a);
+  assert.strictEqual(pv.spectating, false);
+  assert.strictEqual(pv.spectators[0].name, '观众甲');
+
+  // 开牌后，观战者能看到参与摊牌者的牌
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  forceCards(room, c, [card('C', 9), card('C', 2), card('C', 3)]);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b }); // a 赢，剩 a、c
+  room.turnId = a;
+  room.act(a, 'compare', { target: c });
+  assert.strictEqual(room.phase, 'showdown');
+
+  const sv = room.serialize(spec.id);
+  const shown = sv.players.filter((p) => p.cards && p.cards.length === 3);
+  assert.ok(shown.length >= 1, '开牌后观战者应能看到摊牌');
+  assert.ok(sv.lastResult && sv.lastResult.winners.length > 0, '观战者能看到结算结果');
+
+  // 观战者可以聊天
+  room.addChat(spec.id, '好看');
+  assert.strictEqual(room.chat[room.chat.length - 1].text, '好看');
+
+  // 离场
+  assert.strictEqual(room.removePlayer(spec.id), true);
+  assert.strictEqual(room.spectators.size, 0);
+});
+
+test('观战：人数上限与落盘恢复', () => {
+  const room = new Room('spec2', QUIET);
+  room.addPlayer('主');
+  for (let i = 0; i < MAX_SPECTATORS_TEST; i++) room.addSpectator('观众' + i);
+  assert.throws(() => room.addSpectator('超员'), /观战人数已满/);
+
+  const raw = JSON.parse(JSON.stringify(room.toJSON()));
+  const restored = Room.fromJSON(raw);
+  assert.strictEqual(restored.spectators.size, room.spectators.size, '观战者随落盘保留');
+  const lastToken = [...room.spectators.values()][0].token;
+  const sp = [...restored.spectators.values()][0];
+  assert.strictEqual(sp.token, lastToken, '观战 token 保留');
+  assert.strictEqual(restored.serialize(sp.id).spectating, true);
+});
 
 test('抢庄：倍数最高者当庄，全部选完后自动进入下注阶段', () => {
   const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });

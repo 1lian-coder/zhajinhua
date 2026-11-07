@@ -222,6 +222,13 @@ function unregisterStream(roomId, pid, res) {
       p.connected = false;
       p.lastSeen = Date.now();
       broadcast(room);
+    } else if (!p) {
+      // 观战者离线
+      const s = room.spectators.get(pid);
+      if (s && !stillOpen) {
+        s.connected = false;
+        broadcast(room);
+      }
     }
   }
 }
@@ -468,6 +475,50 @@ const api = {
     return { ok: true, config: room.config };
   },
 
+  /** 观战：不占座位，看公共信息（开牌后才能看到牌），不能操作 */
+  async watch(body) {
+    if (rateLimited('watch', 20)) throw userError('操作太频繁，请稍后再试');
+    const room = getRoomOrThrow(body.roomId);
+    if (room.joinPin) {
+      if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
+      if (!room.checkJoinPin(body.password)) {
+        recordPinFail();
+        throw userError(
+          String(body.password || '') ? '房间密码不正确' : '这个房间需要密码',
+          'ROOM_PASSWORD_REQUIRED'
+        );
+      }
+    }
+    const s = room.addSpectator(body.name);
+    markDirty();
+    broadcast(room);
+    return { ok: true, roomId: room.id, playerId: s.id, token: s.token, spectating: true };
+  },
+
+  /** 观战大厅：列出进行中的房间（服务器设了创建口令时，需要口令才能看列表） */
+  async rooms(body) {
+    const settings = loadSettings();
+    if (settings.createPin && String(body.pin || '').trim() !== settings.createPin) {
+      throw userError('需要口令才能查看房间列表', 'PIN_REQUIRED');
+    }
+    const list = [];
+    for (const r of rooms.values()) {
+      list.push({
+        roomId: r.id,
+        players: r.players.size,
+        maxPlayers: 15,
+        spectators: r.spectators.size,
+        phase: r.phase,
+        handNo: r.handNo,
+        pot: r.pot,
+        stake: r.stake,
+        hasJoinPin: !!r.joinPin
+      });
+    }
+    list.sort((a, b) => b.players - a.players);
+    return { ok: true, rooms: list };
+  },
+
   /** 房主设置/清除房间加入密码 */
   async setRoomPin(body) {
     const { room, player } = authPlayer(body);
@@ -550,9 +601,15 @@ function handleEvents(req, res, query) {
     return;
   }
 
+  // 玩家或观战者都可能连 SSE：观战者不在 players 里
   const player = room.getPlayer(pid);
-  player.connected = true;
-  player.lastSeen = Date.now();
+  const spectator = player ? null : room.spectators.get(pid);
+  if (player) {
+    player.connected = true;
+    player.lastSeen = Date.now();
+  } else if (spectator) {
+    spectator.connected = true;
+  }
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -622,8 +679,7 @@ const server = http.createServer(async (req, res) => {
         players: playerCount,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         createPinRequired: !!loadSettings().createPin
-      });
-      return;
+      });      return;
     }
 
     if (pathname === '/api/events') {
@@ -645,6 +701,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, { ok: true, ...room.serialize(p.id) });
+      return;
+    }
+
+    if (pathname === '/api/rooms') {
+      const result = await api.rooms({ pin: url.searchParams.get('pin') || '' });
+      json(res, 200, result);
       return;
     }
 

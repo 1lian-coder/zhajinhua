@@ -388,6 +388,8 @@
     $('screen-table').hidden = name !== 'table';
     if (name === 'table') startTicker();
     else stopTicker();
+    if (name === 'home') startRoomListPolling();
+    else stopRoomListPolling();
   }
 
   function setUrlRoom(roomId) {
@@ -550,6 +552,7 @@
     }
     setUrlRoom(rid);
     updateResumeBox();
+    startRoomListPolling();
     if (opts.toast) toast(opts.toast, opts.toastType || '');
     if (opts.focusJoin) {
       setTimeout(function () {
@@ -588,6 +591,8 @@
     connected = false;
     openStream();
   }
+
+  /** 观战模式：隐藏自己的操作区，显示观战横幅（由 renderMyArea 读取 state.spectating） */
 
   function resumeRoom(sess, rid) {
     if (!sess) {
@@ -1232,6 +1237,130 @@
     return null;
   }
 
+  /* ------------------------------------------------------- 实时牌局 / 观战 */
+
+  var roomsTimer = null;
+
+  function loadRoomList() {
+    var pin = readCreatePin();
+    var url = '/api/rooms' + (pin ? '?pin=' + encodeURIComponent(pin) : '');
+    fetch(url, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var box = $('rooms-list');
+        var empty = $('rooms-empty');
+        if (!box) return;
+        if (!d || !d.ok) {
+          box.innerHTML = '';
+          var p = document.createElement('p');
+          p.className = 'tips';
+          p.textContent = (d && d.error) ? d.error : '暂时读不到房间列表';
+          box.appendChild(p);
+          return;
+        }
+        if (empty) empty.hidden = true;
+        var rooms = d.rooms || [];
+        box.innerHTML = '';
+        if (!rooms.length) {
+          var p2 = document.createElement('p');
+          p2.className = 'tips';
+          p2.textContent = '现在没有进行中的牌局。创建一间房，朋友进来就能玩。';
+          box.appendChild(p2);
+          return;
+        }
+        for (var i = 0; i < rooms.length; i++) {
+          box.appendChild(buildRoomRow(rooms[i]));
+        }
+      })
+      .catch(function () {
+        var box = $('rooms-list');
+        if (box) {
+          box.innerHTML = '';
+          var p3 = document.createElement('p');
+          p3.className = 'tips';
+          p3.textContent = '连不上服务器';
+          box.appendChild(p3);
+        }
+      });
+  }
+
+  function buildRoomRow(r) {
+    var row = document.createElement('div');
+    row.className = 'room-row';
+
+    var info = document.createElement('div');
+    info.className = 'room-info';
+    var no = document.createElement('b');
+    no.className = 'room-no mono';
+    no.textContent = r.roomId;
+    info.appendChild(no);
+
+    var meta = document.createElement('span');
+    meta.className = 'room-meta';
+    var phaseText = r.phase === 'bidding' ? '抢庄中' : (r.phase === 'playing' ? '进行中' : (r.phase === 'showdown' ? '结算中' : '大厅'));
+    meta.textContent = r.players + '/' + (r.maxPlayers || 15) + '人 · ' + phaseText +
+      (r.phase !== 'lobby' ? ' · 第' + r.handNo + '局 · 底池' + r.pot : '') +
+      (r.hasJoinPin ? ' · 有密码' : '');
+    info.appendChild(meta);
+    row.appendChild(info);
+
+    var actions = document.createElement('div');
+    actions.className = 'room-actions';
+
+    var watchBtn = document.createElement('button');
+    watchBtn.className = 'btn btn-ghost btn-small';
+    watchBtn.type = 'button';
+    watchBtn.textContent = '观战';
+    watchBtn.addEventListener('click', function () { doWatch(r.roomId); });
+    actions.appendChild(watchBtn);
+
+    row.appendChild(actions);
+    return row;
+  }
+
+  function startRoomListPolling() {
+    stopRoomListPolling();
+    loadRoomList();
+    roomsTimer = setInterval(function () {
+      if (currentScreen === 'home') loadRoomList();
+    }, 3000);
+  }
+
+  function stopRoomListPolling() {
+    if (roomsTimer) {
+      clearInterval(roomsTimer);
+      roomsTimer = null;
+    }
+  }
+
+  function doWatch(roomId) {
+    if (busy) return;
+    var name = String($('nickname').value || '').trim() || '观众';
+    var pinField = $('join-pin-field');
+    var password = pinField && !pinField.hidden ? digits($('join-pin').value).slice(0, 8) : '';
+    busy = true;
+    api('/api/watch', { roomId: roomId, name: name, password: password }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) {
+        if (res && res.code === 'ROOM_PASSWORD_REQUIRED' && pinField) {
+          pinField.hidden = false;
+          toast('这个房间需要密码，请先输入房间密码', 'err');
+        } else {
+          toast((res && res.error) || '观战失败', 'err');
+        }
+        return;
+      }
+      lsSet(NICK_KEY, name);
+      enterRoom({
+        roomId: res.roomId,
+        playerId: res.playerId,
+        token: res.token,
+        name: name,
+        spectating: true
+      });
+    });
+  }
+
   /* ------------------------------------------------------------------ 渲染 */
 
   /* ------------------------------------------------------- 快捷聊天 */
@@ -1657,6 +1786,22 @@
   function renderMyArea(st) {
     var inLobby = st.phase === 'lobby';
     var me = findPlayer(st, meId());
+
+    // 观战模式：隐藏「我的牌区」，显示观战横幅
+    var banner = $('spectator-banner');
+    if (st.spectating) {
+      if (banner) {
+        banner.hidden = false;
+        var sc = $('spectator-count');
+        if (sc) sc.textContent = String(st.spectatorCount || 1);
+      }
+      var myArea = $('my-area');
+      if (myArea) myArea.classList.add('spectating');
+      return;
+    }
+    if (banner) banner.hidden = true;
+    var myAreaEl = $('my-area');
+    if (myAreaEl) myAreaEl.classList.remove('spectating');
 
     // 我的座位信息（始终显示；大厅也显示，方便看自己筹码）
     if (me) {
@@ -2392,6 +2537,18 @@
     var actions = $('action-btns');
     var primary = $('btn-bottom');
     var bidBar = $('bid-bar');
+
+    // 观战者没有任何操作权
+    if (st.spectating) {
+      if (actions) actions.hidden = true;
+      if (primary) primary.hidden = true;
+      if (bidBar) bidBar.hidden = true;
+      var tt = $('turn-text');
+      if (tt) tt.textContent = '观战中 · 只能看，不能出牌';
+      var cc = $('turn-count');
+      if (cc) cc.hidden = true;
+      return;
+    }
     var tipText = '';
     var mid = meId();
     var myTurn = !!(st.turnId && st.turnId === mid);
@@ -2777,6 +2934,7 @@
     $('btn-adv').addEventListener('click', toggleAdvanced);
     $('btn-create').addEventListener('click', doCreate);
     $('btn-join').addEventListener('click', doJoin);
+    $('btn-refresh-rooms').addEventListener('click', loadRoomList);
     $('btn-resume').addEventListener('click', doResume);
 
     $('join-room').addEventListener('input', function () {

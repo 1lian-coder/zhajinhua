@@ -83,6 +83,25 @@ SSE 长连接。事件类型：
 ### POST /api/pauseAuto
 取消本局的自动连开（任何人可调用）。`{ roomId, playerId, token }`
 
+### POST /api/watch
+加入房间**观战**（不占玩家座位、不能出牌、看不到任何暗牌，开牌后才可见）。
+```json
+{ "roomId":"837261", "name":"观众甲", "password":"1234" }
+```
+房间有密码时需带 `password`（错误返回 `code:"ROOM_PASSWORD_REQUIRED"`）。
+返回 `{ ok:true, roomId, playerId:"s5", token, spectating:true }`。
+观战者上限 20 人，可正常连 SSE、聊天、看结算。
+
+### GET /api/rooms?pin=1234
+观战大厅：列出当前所有房间。
+```json
+{ "ok":true, "rooms":[
+  { "roomId":"837261", "players":4, "maxPlayers":15, "spectators":1,
+    "phase":"playing", "handNo":3, "pot":120, "stake":20, "hasJoinPin":false }
+]}
+```
+若服务器设置了创建口令（`CREATE_PIN`），需带 `pin`，否则返回 `{ok:false, code:"PIN_REQUIRED"}`。
+
 ### POST /api/addBot
 房主添加人机玩家（仅 lobby / showdown 阶段）。人机由服务端 `botTick` 驱动自动出牌。
 ```json
@@ -137,6 +156,9 @@ SSE 长连接。事件类型：
   "bidDeadline": 1699999500000,        // 抢庄阶段截止时刻（phase=bidding 时有效，否则 0）
   "bidStartedAt": 1699999400000,       // 抢庄阶段开始时刻
   "myBid": 2,                          // 我自己的抢庄选择（null=未选）
+  "spectating": false,                 // 我是否是观战者
+  "spectatorCount": 1,                 // 当前观战人数
+  "spectators": [ { "id":"s1", "name":"观众甲", "connected":true } ],
   "serverNow": 1699999950000,          // 用于校准倒计时（别用本机时间）
   "hostId": "p1",
   "maxPlayers": 6,

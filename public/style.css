@@ -2102,6 +2102,68 @@ input {
   margin-top: 8px;
 }
 
+/* ==================== 实时牌局列表 / 观战 ==================== */
+
+.rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(120, 190, 160, .07);
+  border: 1px solid rgba(120, 190, 160, .22);
+}
+
+.room-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.room-no {
+  font-size: 15px;
+  color: var(--gold);
+  letter-spacing: 1px;
+}
+
+.room-meta {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-actions .btn {
+  flex: 0 0 auto;
+}
+
+.spectator-banner {
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(120, 170, 255, .12);
+  border: 1px solid rgba(120, 170, 255, .35);
+  color: #bcd6ff;
+  font-size: 12px;
+  text-align: center;
+}
+
+.my-area.spectating .my-cards-block,
+.my-area.spectating .my-head,
+.my-area.spectating .my-hint {
+  display: none !important;
+}
+
 /* ==================== 加载/连通性兜底提示 ==================== */
 
 .dead-banner {
