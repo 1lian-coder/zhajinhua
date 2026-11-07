@@ -104,7 +104,14 @@ else
   exit 1
 fi
 
-PUB_IP="$(curl -fsS --max-time 5 https://api.ipify.org || true)"
+# 公网 IP：优先阿里云元数据服务（不依赖外网），其次常见 API
+PUB_IP=""
+try_ip() { [ -n "$PUB_IP" ] && return 0; PUB_IP="$(eval "$1" 2>/dev/null | tr -d '[:space:]')"; }
+try_ip 'curl -fsS --max-time 3 http://100.100.100.200/latest/meta-data/eipv4'
+try_ip 'curl -fsS --max-time 5 https://ipinfo.io/ip'
+try_ip 'curl -fsS --max-time 5 https://api.ipify.org'
+try_ip 'curl -fsS --max-time 5 https://ifconfig.me/ip'
+
 echo ""
 echo "[6/6] 完成！"
 echo "  ======================================"
