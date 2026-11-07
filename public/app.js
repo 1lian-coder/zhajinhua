@@ -22,8 +22,8 @@
   var MAX_SESSIONS = 8;
 
   var CONFIG_FIELDS = [
-    { key: 'ante', label: '底注', def: 10, min: 1, max: 10000, step: 1 },
-    { key: 'initialChips', label: '初始筹码', def: 1000, min: 100, max: 1000000, step: 100 },
+    { key: 'ante', label: '底分（每人底注）', def: 10, min: 1, max: 10000, step: 1 },
+    { key: 'initialChips', label: '初始筹码（每人）', def: 1000, min: 10, max: 1000000, step: 10 },
     { key: 'baseStake', label: '初始单注', def: 10, min: 1, max: 10000, step: 1 },
     { key: 'maxStake', label: '单注封顶', def: 100, min: 1, max: 100000, step: 1 },
     { key: 'maxPot', label: '总注封顶', def: 3000, min: 2, max: 10000000, step: 100 },
@@ -1520,7 +1520,6 @@
     html += '<span>本局下注</span><b>' + esc(p.bet || 0) + '</b>';
     html += '<span>净分</span><b class="' + (p.net > 0 ? 'pd-pos' : (p.net < 0 ? 'pd-neg' : '')) + '">' + fmtSigned(p.net) + '</b>';
     html += '<span>战绩</span><b>' + esc(stat.hands) + ' 局 / ' + esc(stat.wins) + ' 胜 · 最大赢池 ' + esc(stat.best) + '</b>';
-    if (p.debt) html += '<span>欠分</span><b class="pd-neg">' + esc(p.debt) + '</b>';
     html += '</div>';
 
     if (!isSelf) {
@@ -2336,13 +2335,16 @@
     var isHost = st.hostId === meId();
     if (!isHost) configDirty = false;
     var cfg = st.config || DEFAULT_CONFIG;
-    var sig = JSON.stringify(cfg) + '|' + (isHost ? 'H' : 'G');
+    var locked = (st.handNo || 0) > 0; // 首局开始后规则锁定
+    var sig = JSON.stringify(cfg) + '|' + (isHost ? 'H' : 'G') + '|' + (locked ? 'L' : 'U');
     if (!configDirty && sig !== configSig) {
       configSig = sig;
-      buildConfigForm($('config-form'), cfg, !isHost);
+      buildConfigForm($('config-form'), cfg, !isHost || locked);
     }
-    $('btn-save-config').hidden = !isHost;
-    $('config-lock').textContent = isHost ? '你是房主，可修改后保存' : '只有房主可修改，你可以先看看';
+    $('btn-save-config').hidden = !isHost || locked;
+    $('config-lock').textContent = locked
+      ? '牌局已开始，设置已锁定'
+      : (isHost ? '你是房主，可修改后保存' : '只有房主可修改，你可以先看看');
 
     // 房间密码状态（明文永不下发，只显示"已设置/未设置"）
     var pinState = $('room-pin-state');

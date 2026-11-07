@@ -299,6 +299,15 @@ async function main() {
   }
   console.log(`✓ ${sessions.length} 名玩家加入`);
 
+  // 主房间规则在大厅阶段一次设定（开局后设置会锁定）
+  {
+    const mainCfg = await post('/api/config', {
+      ...sessions[0],
+      config: { ante: 10, initialChips: 5000, baseStake: 10, maxStake: 100, maxPot: 3000, seeMultiplier: 2, turnSeconds: 0, autoRebuy: true }
+    });
+    if (!mainCfg.ok) throw new Error('主房间配置失败: ' + mainCfg.error);
+  }
+
   // 1z) 快捷聊天：发送、下发、限频
   {
     const c1 = await post('/api/chat', { ...sessions[0], text: '  快点啦  ' });
@@ -316,27 +325,32 @@ async function main() {
     await sleep(3100);
   }
 
-  // 1y) 孤注一掷：把一个玩家筹码压到跟不起，验证全下后直接开牌、账目零和
+  // 1y) 孤注一掷：独立房间（开局后配置锁定，所以先配置再开局）
   {
+    const allinCreated = await post('/api/create', { name: '全下房主', pin: '2468' });
+    if (!allinCreated.ok) throw new Error('全下房间创建失败: ' + allinCreated.error);
+    const arRoom = allinCreated.roomId;
+    const arSessions = [{ roomId: arRoom, playerId: allinCreated.playerId, token: allinCreated.token }];
+    for (const nm of ['全下乙', '全下丙', '全下丁']) {
+      const r = await post('/api/join', { roomId: arRoom, name: nm });
+      if (!r.ok) throw new Error('全下房间加入失败: ' + r.error);
+      arSessions.push({ roomId: arRoom, playerId: r.playerId, token: r.token });
+    }
     const cfg2 = await post('/api/config', {
-      roomId,
-      playerId: sessions[0].playerId,
-      token: sessions[0].token,
+      ...arSessions[0],
       config: { ante: 10, initialChips: 40, baseStake: 10, maxStake: 100, maxPot: 99999, seeMultiplier: 2, turnSeconds: 0, autoRebuy: false }
     });
     if (!cfg2.ok) throw new Error('调小初始筹码失败: ' + cfg2.error);
-    await post('/api/start', { ...sessions[0] });
+    await post('/api/start', { ...arSessions[0] });
 
-    // 找到筹码不足跟注的人，直接让所有人轮到就弃牌，直到某个人 chips < callCost 时全下
+    // 找到筹码不足跟注的人，直接让所有人轮到就行动，直到某个人 chips < callCost 时全下
     let allinDone = false;
     let g2 = 0;
     while (!allinDone && g2++ < 200) {
-      const s = await getState(sessions[0]);
+      const s = await getState(arSessions[0]);
       if (s.phase !== 'playing') break;
-      const turnSess = sessions.find((x) => x.playerId === s.turnId);
+      const turnSess = arSessions.find((x) => x.playerId === s.turnId);
       if (!turnSess) break;
-      const me = s.players.find((p) => p.id === s.turnId);
-      const opts = s.myOptions ? null : null;
       const ts = await getState(turnSess);
       const allinOpt = (ts.myOptions || []).find((o) => o.type === 'allin');
       if (allinOpt) {
@@ -351,19 +365,17 @@ async function main() {
         action: callOpt ? 'call' : 'fold',
         payload: {}
       });
-      if (!r.ok) break; // 有人没筹码跟注又没到全下选项（不应发生）
-      void me; void opts;
+      if (!r.ok) break;
     }
 
-    const s2 = await getState(sessions[0]);
-    // 全下后：要么直接开牌（其余全下/弃牌），要么继续到别人行动；等它自然结束
+    // 全下后：要么直接开牌，要么继续到别人行动；等它自然结束
     let g3 = 0;
-    let phase = s2.phase;
+    let phase = (await getState(arSessions[0])).phase;
     while (phase === 'playing' && g3++ < 200) {
-      const s = await getState(sessions[0]);
+      const s = await getState(arSessions[0]);
       phase = s.phase;
       if (phase !== 'playing') break;
-      const turnSess = sessions.find((x) => x.playerId === s.turnId);
+      const turnSess = arSessions.find((x) => x.playerId === s.turnId);
       if (!turnSess) break;
       const ts = await getState(turnSess);
       const pick = (ts.myOptions || []).find((o) => o.type === 'call') ||
@@ -373,26 +385,20 @@ async function main() {
       if (!r.ok) break;
     }
 
-    const fin = await getState(sessions[0]);
+    const fin = await getState(arSessions[0]);
     if (fin.phase !== 'showdown') throw new Error('全下场景没走到结算: ' + fin.phase);
     const netSum2 = fin.players.reduce((a, p) => a + p.net, 0);
     if (netSum2 !== 0) throw new Error('全下结算后账目不零和: ' + netSum2);
     for (const p of fin.players) {
       if (p.chips < 0) throw new Error(p.name + ' 筹码为负: ' + p.chips);
     }
-    // 战绩应已累计
     for (const p of fin.players) {
       if (!p.stats || !p.stats.hands) throw new Error(p.name + ' 没有战绩统计');
     }
     console.log('✓ 孤注一掷整局跑通（零和、无负筹码），战绩已累计');
 
-    // 恢复主流程配置（大筹码 + 自动补筹）
-    await post('/api/config', {
-      ...sessions[0],
-      config: { ante: 10, initialChips: 5000, baseStake: 10, maxStake: 100, maxPot: 99999, seeMultiplier: 2, turnSeconds: 0, autoRebuy: true }
-    });
+    for (const s of arSessions) await post('/api/leave', s);
   }
-
 
   // 1x) 房间密码：设置后无密码/错密码不能进，对的能进；不泄露明文
   {

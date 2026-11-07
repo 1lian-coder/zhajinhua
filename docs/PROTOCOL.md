@@ -263,10 +263,14 @@ SSE 长连接。事件类型：
 { "roomId":"837261", "playerId":"p1", "token":"…", "op":"decline", "loanId":"L3" }
 ```
 `propose` 支持两个方向：`to`（我借给对方）/ `from`（我向对方借）。对方筹码低于底注时才需要借分。
-同意后筹码从出借方转到借入方，借入方 `debt` 累加。
+同意后筹码与净分立即结算：出借方 chips/net 各 -amount，借入方 chips/net 各 +amount（不记欠分）。
 
 ### state 里与借分/比牌相关字段
-- `players[].debt`：该玩家累计借分（展示用）
-- `myDebt`：我的累计借分
 - `loans`：最近借分记录 `{ id, from, fromName, to, toName, amount, status(pending/accepted/declined), at }`
 - `myCompare`：**仅比牌双方可见**，最近一次比牌 `{ a,aName,aCards, b,bName,bCards, winner, at }`
+
+### POST /api/config 的锁定规则
+- 只有房主能改；非房主返回「只有房主可以修改设置」
+- `phase = playing / bidding` 时返回「牌局进行中不能修改设置」
+- `handNo > 0`（已开过局）返回「牌局已开始，设置已锁定」，想改规则请重新建房
+- `ante`（底分）范围 1~10000；`initialChips`（初始筹码）范围 10~1000000

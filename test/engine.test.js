@@ -857,8 +857,10 @@ test('借分：需要对方同意才到账，金额与条件都有校验', () =>
   room.acceptLoan(loan.id, b);
   assert.strictEqual(room.players.get(a).chips, chipsA - 200);
   assert.strictEqual(room.players.get(b).chips, chipsB + 200);
-  assert.strictEqual(room.players.get(b).debt, 200, '借分记在债务里');
-  assert.strictEqual(room.serialize(b).myDebt, 200);
+  // 借分直接结算：出借方净分 -200，借入方净分 +200，不记欠分
+  assert.strictEqual(room.players.get(a).net, -200, '出借方直接扣分');
+  assert.strictEqual(room.players.get(b).net, 200, '借入方直接加分');
+  assert.strictEqual(room.serialize(a).players.find((x) => x.id === a).debt, undefined);
   assert.strictEqual(room.serialize(a).loans[0].status, 'accepted');
 
   // 已经处理过的不能再操作
@@ -1232,4 +1234,39 @@ test('快捷聊天：清洗、限长、带序号；不过滤表情', () => {
   const view = room.serialize(a);
   assert.strictEqual(view.chat.length, 3);
   assert.strictEqual(view.chatSeq, 3);
+});
+
+test('设置锁定：首局开始后房主也不能改规则；开局前可自定义底分和初始筹码', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0 });
+  const [a] = room.order;
+
+  // 开局前：自定义底分 / 初始筹码，并同步到还没开局的玩家
+  const saved = room.setConfig({ ...QUIET, turnSeconds: 0, ante: 25, initialChips: 300, baseStake: 25, maxStake: 100, maxPot: 3000 }, room.hostId);
+  assert.strictEqual(saved.ante, 25, '底分可以自定义');
+  assert.strictEqual(saved.initialChips, 300, '初始筹码可以自定义');
+  for (const p of room.players.values()) assert.strictEqual(p.chips, 300, '大厅阶段同步初始筹码');
+
+  // 底分/初始筹码下限放宽
+  const low = room.setConfig({ ...QUIET, turnSeconds: 0, ante: 1, initialChips: 10 }, room.hostId);
+  assert.strictEqual(low.ante, 1);
+  assert.strictEqual(low.initialChips, 10);
+
+  // 首局开始后：锁定
+  room.setConfig({ ...QUIET, turnSeconds: 0, ante: 10, initialChips: 1000, baseStake: 10, maxStake: 100, maxPot: 5000 }, room.hostId);
+  room.startHand(a);
+  assert.throws(
+    () => room.setConfig({ ...QUIET, turnSeconds: 0, ante: 99 }, room.hostId),
+    /牌局进行中不能修改设置/,
+    '牌局进行中不能改设置'
+  );
+
+  // 局间（showdown）同样锁定：不能边打边改
+  room.turnId = room.order[1];
+  room.act(room.order[1], 'fold');
+  assert.strictEqual(room.phase, 'showdown');
+  assert.throws(
+    () => room.setConfig({ ...QUIET, turnSeconds: 0, ante: 99 }, room.hostId),
+    /设置已锁定/,
+    '首局开始后（包括局间）都不能改设置'
+  );
 });
