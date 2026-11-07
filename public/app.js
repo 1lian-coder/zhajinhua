@@ -31,6 +31,7 @@
     { key: 'turnSeconds', label: '思考秒数', def: 45, min: 0, max: 600, step: 5 },
     { key: 'dealerBid', label: '抢庄模式', type: 'bool', def: false },
     { key: 'bidSeconds', label: '抢庄秒数', def: 10, min: 3, max: 60, step: 1 },
+    { key: 'sessionHands', label: '每轮局数(0=不限)', def: 0, min: 0, max: 200, step: 1 },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -1243,18 +1244,29 @@
 
   function loadRoomList() {
     var pin = readCreatePin();
-    var url = '/api/rooms' + (pin ? '?pin=' + encodeURIComponent(pin) : '');
+    var box = $('rooms-list');
+    if (!box) return;
+    // 观战权限：只有知道创建口令的自己人能看到牌局列表
+    if (!pin) {
+      box.innerHTML = '';
+      var pLock = document.createElement('p');
+      pLock.className = 'tips';
+      pLock.textContent = '输入「创建口令」后才能查看牌局列表（避免外人围观）';
+      box.appendChild(pLock);
+      return;
+    }
+    var url = '/api/rooms?pin=' + encodeURIComponent(pin);
     fetch(url, { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        var box = $('rooms-list');
         var empty = $('rooms-empty');
-        if (!box) return;
         if (!d || !d.ok) {
           box.innerHTML = '';
           var p = document.createElement('p');
           p.className = 'tips';
-          p.textContent = (d && d.error) ? d.error : '暂时读不到房间列表';
+          p.textContent = (d && d.code === 'PIN_REQUIRED')
+            ? '口令不对，或这台服务器没设置可看列表的口令'
+            : ((d && d.error) ? d.error : '暂时读不到房间列表');
           box.appendChild(p);
           return;
         }
@@ -1273,14 +1285,11 @@
         }
       })
       .catch(function () {
-        var box = $('rooms-list');
-        if (box) {
-          box.innerHTML = '';
-          var p3 = document.createElement('p');
-          p3.className = 'tips';
-          p3.textContent = '连不上服务器';
-          box.appendChild(p3);
-        }
+        box.innerHTML = '';
+        var p3 = document.createElement('p');
+        p3.className = 'tips';
+        p3.textContent = '连不上服务器';
+        box.appendChild(p3);
       });
   }
 
@@ -1335,11 +1344,16 @@
 
   function doWatch(roomId) {
     if (busy) return;
+    var pin = readCreatePin();
+    if (!pin) {
+      toast('需要创建口令才能观战', 'err');
+      return;
+    }
     var name = String($('nickname').value || '').trim() || '观众';
     var pinField = $('join-pin-field');
     var password = pinField && !pinField.hidden ? digits($('join-pin').value).slice(0, 8) : '';
     busy = true;
-    api('/api/watch', { roomId: roomId, name: name, password: password }).then(function (res) {
+    api('/api/watch', { roomId: roomId, name: name, password: password, pin: pin }).then(function (res) {
       busy = false;
       if (!res || !res.ok) {
         if (res && res.code === 'ROOM_PASSWORD_REQUIRED' && pinField) {
@@ -2165,7 +2179,7 @@
     var players = st.players || [];
     var netSig = '';
     for (var i = 0; i < players.length; i++) netSig += players[i].id + ':' + players[i].net + ',';
-    var sig = (r.at || 0) + '#' + (r.handNo || 0) + '#' + (r.reason || '') + '#' + netSig;
+    var sig = (r.at || 0) + '#' + (r.handNo || 0) + '#' + (r.reason || '') + '#' + netSig + '#' + (st.revealWinner ? 1 : 0);
     if (sig === resultSig) return;
     resultSig = sig;
 
@@ -2187,7 +2201,60 @@
     }
     html += '</div>';
 
-    // 自动连开提示（服务端排定 nextHandAt，前端只做显示与倒计时）
+    // ---- 个人输赢横幅 + 弃牌/观战提示 ----
+    var meNow = findPlayer(st, meId());
+    var myAmount = null;
+    for (var wq = 0; wq < winners.length; wq++) {
+      if (meNow && winners[wq].id === meNow.id) myAmount = winners[wq].amount;
+    }
+    if (!st.spectating) {
+      if (myAmount != null) {
+        html += '<div class="my-result win">🎉 你赢了 <b>+' + esc(myAmount) + '</b></div>';
+      } else if (meNow && meNow.folded) {
+        html += '<div class="my-result folded">🙂 你已弃牌，继续观战本局…</div>';
+      } else if (meNow) {
+        html += '<div class="my-result lose">😢 本局你输了</div>';
+      }
+    } else {
+      html += '<div class="my-result watch">👁 观战中 · 等待本局结束</div>';
+    }
+
+    // ---- 弃牌获胜：赢家可选择公布牌面 ----
+    if (r.singleWin && meNow && winners[0] && winners[0].id === meNow.id) {
+      if (st.revealWinner) {
+        html += '<div class="reveal-choice done">✅ 你已公布牌面</div>';
+      } else {
+        html += '<div class="reveal-choice">' +
+          '<span>这局是靠别人弃牌赢的，要公布你的牌吗？</span>' +
+          '<button id="btn-reveal-win" class="btn btn-primary btn-small" type="button">公布我的牌</button>' +
+          '</div>';
+      }
+    }
+
+    // ---- 每轮局数打满：选择继续玩还是结束 ----
+    if (r.sessionOver) {
+      var targetHands = (st.config && st.config.sessionHands) || 0;
+      html += '<div class="session-over">' +
+        '<div class="session-title">🏁 本轮 ' + esc(targetHands || r.handNo) + ' 局已打完</div>' +
+        '<div class="session-btns">' +
+        '<button id="btn-continue-round" class="btn btn-primary" type="button">再来一轮</button>' +
+        '<button id="btn-finish-round" class="btn btn-ghost" type="button">不玩了，离开</button>' +
+        '</div></div>';
+    }
+
+    // ---- 自动连开开关（房主可见，让入口更显眼） ----
+    if (!r.sessionOver && st.hostId === meId() && !st.spectating) {
+      var autoOn = !!(st.config && st.config.autoNext);
+      if (autoOn) {
+        html += '<div class="auto-toggle"><span>自动开下一局：开</span>' +
+          '<button id="btn-toggle-auto" class="btn btn-ghost btn-small" type="button">关闭</button></div>';
+      } else {
+        html += '<div class="auto-toggle"><span>每局都要手动点「下一局」？</span>' +
+          '<button id="btn-toggle-auto" class="btn btn-primary btn-small" type="button">开启自动连开</button></div>';
+      }
+    }
+
+    // ---- 自动连开倒计时（服务端排定 nextHandAt） ----
     if (st.nextHandAt) {
       html += '<div class="auto-next" id="auto-next-bar">' +
         '<span id="auto-next-text">准备自动开下一局…</span>' +
@@ -2208,6 +2275,7 @@
           name: entry.name,
           hand: entry.hand,
           allIn: !!entry.allIn,
+          folded: !!entry.folded,
           cards: entry.cards || [],
           win: isWin
         });
@@ -2228,6 +2296,7 @@
         var row = rows[q];
         html += '<div class="reveal-row' + (row.win ? ' winner' : '') + '">';
         html += '<div class="reveal-name">' + esc(row.name) +
+          (row.folded ? '<i class="folded-tag">弃牌</i>' : '') +
           (row.allIn ? '<i class="allin-tag">全下</i>' : '') +
           (row.win ? '<i class="win-tag">赢</i>' : '') + '</div>';
         html += '<div class="reveal-cards">';
@@ -2319,6 +2388,61 @@
       });
     }
     updateAutoNextText();
+
+    // 弃牌获胜：公布牌
+    var revealBtn = panel.querySelector('#btn-reveal-win');
+    if (revealBtn) {
+      revealBtn.addEventListener('click', function () {
+        revealBtn.disabled = true;
+        api('/api/reveal', {
+          roomId: session.roomId,
+          playerId: session.playerId,
+          token: session.token
+        }).then(function (res) {
+          if (!res || !res.ok) {
+            revealBtn.disabled = false;
+            toast((res && res.error) || '公布失败', 'err');
+          } else {
+            toast('已公布牌面', 'ok');
+          }
+        });
+      });
+    }
+
+    // 本轮打满：再来一轮 / 不玩了
+    var continueBtn = panel.querySelector('#btn-continue-round');
+    if (continueBtn) {
+      continueBtn.addEventListener('click', function () { doStart(); });
+    }
+    var finishBtn = panel.querySelector('#btn-finish-round');
+    if (finishBtn) {
+      finishBtn.addEventListener('click', function () { doExit(); });
+    }
+
+    // 自动连开快捷开关
+    var toggleBtn = panel.querySelector('#btn-toggle-auto');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function () {
+        toggleBtn.disabled = true;
+        var cfg = {};
+        var cur = (state && state.config) || {};
+        for (var k in cur) if (Object.prototype.hasOwnProperty.call(cur, k)) cfg[k] = cur[k];
+        cfg.autoNext = !cfg.autoNext;
+        api('/api/config', {
+          roomId: session.roomId,
+          playerId: session.playerId,
+          token: session.token,
+          config: cfg
+        }).then(function (res) {
+          if (!res || !res.ok) {
+            toggleBtn.disabled = false;
+            toast((res && res.error) || '设置失败', 'err');
+          } else {
+            toast(cfg.autoNext ? '已开启自动连开' : '已关闭自动连开', 'ok');
+          }
+        });
+      });
+    }
   }
 
   /** 自动连开倒计时文案（用服务端 nextHandAt 与本机时间差做相对估算） */

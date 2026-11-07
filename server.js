@@ -475,9 +475,14 @@ const api = {
     return { ok: true, config: room.config };
   },
 
-  /** 观战：不占座位，看公共信息（开牌后才能看到牌），不能操作 */
+  /** 观战：不占座位，看公共信息（开牌后才能看到牌），不能操作。
+   *  服务器设了创建口令时，观战也需要口令——只有知道口令的人能看牌局 */
   async watch(body) {
     if (rateLimited('watch', 20)) throw userError('操作太频繁，请稍后再试');
+    const settings = loadSettings();
+    if (settings.createPin && String(body.pin || '').trim() !== settings.createPin) {
+      throw userError('需要口令才能观战', 'PIN_REQUIRED');
+    }
     const room = getRoomOrThrow(body.roomId);
     if (room.joinPin) {
       if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
@@ -517,6 +522,14 @@ const api = {
     }
     list.sort((a, b) => b.players - a.players);
     return { ok: true, rooms: list };
+  },
+
+  /** 弃牌获胜后，赢家公布自己的牌 */
+  async reveal(body) {
+    const { room, player } = authPlayer(body);
+    room.revealWin(player.id);
+    broadcast(room);
+    return { ok: true };
   },
 
   /** 房主设置/清除房间加入密码 */

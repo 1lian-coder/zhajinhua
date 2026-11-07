@@ -419,7 +419,7 @@ test('中途作废会原额退还下注', () => {
   assert.strictEqual([...room.players.values()].reduce((a, p) => a + p.net, 0), 0);
 });
 
-test('结算时弃牌玩家的牌不会被公开（防开控制台偷看）', () => {
+test('开牌时公开所有参与者的牌（含已弃牌者），但开牌前不泄露', () => {
   const room = newRoom(3, { ...QUIET, maxPot: 200 });
   room.startHand(room.order[0]);
   const [a, b, c] = room.order;
@@ -427,6 +427,11 @@ test('结算时弃牌玩家的牌不会被公开（防开控制台偷看）', ()
   // 让 a 弃牌，然后 b、c 一路打到封顶开牌
   room.turnId = a;
   room.act(a, 'fold');
+
+  // 开牌前：a 的牌不该被别看到
+  const midView = room.serialize(b.id);
+  const midFolded = midView.players.find((p) => p.id === a);
+  assert.strictEqual(midFolded.cards, null, '开牌前弃牌者的牌不能泄露');
 
   let guard = 0;
   while (room.phase === 'playing' && guard++ < 100) {
@@ -438,19 +443,97 @@ test('结算时弃牌玩家的牌不会被公开（防开控制台偷看）', ()
   }
   assert.strictEqual(room.phase, 'showdown');
 
-  const viewer = room.players.get(b);
   const view = room.serialize(b.id);
   const foldedView = view.players.find((p) => p.id === a);
   assert.strictEqual(foldedView.folded, true);
-  assert.strictEqual(foldedView.cards, null, '弃牌玩家的牌不应被公开');
-  assert.strictEqual(foldedView.handName, null);
+  assert.ok(foldedView.cards && foldedView.cards.length === 3, '开牌后弃牌者的牌也应公开');
+  assert.ok(foldedView.handName, '开牌后弃牌者的牌型也应公开');
 
-  // 而参与摊牌的人应该亮牌
-  const others = view.players.filter((p) => !p.folded && p.inHand);
-  assert.ok(others.length >= 1);
-  assert.ok(others.some((p) => p.cards && p.cards.length === 3));
+  // lastResult.showdown 也要包含弃牌者
+  assert.ok(room.lastResult.showdown.some((s) => s.id === a && s.folded), '结算列表应包含弃牌者');
   void c;
-  void viewer;
+});
+
+test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代劳', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+
+  // 两家弃牌 → 只剩一家获胜
+  room.turnId = b;
+  room.act(b, 'fold');
+  room.turnId = c;
+  room.act(c, 'fold');
+  assert.strictEqual(room.phase, 'showdown');
+  assert.strictEqual(room.lastResult.singleWin, true, '应标记为弃牌获胜');
+  assert.strictEqual(room.revealWinner, null);
+
+  // 默认不公布：别人看不到赢家的牌
+  let view = room.serialize(b.id);
+  const w0 = view.players.find((p) => p.id === a);
+  assert.strictEqual(w0.cards, null, '未公布时看不到赢家的牌');
+
+  // 非赢家不能公布
+  assert.throws(() => room.revealWin(b.id), /只有本局赢家/);
+
+  // 赢家公布
+  room.revealWin(a);
+  assert.strictEqual(room.revealWinner, true);
+  view = room.serialize(b.id);
+  const w1 = view.players.find((p) => p.id === a);
+  assert.ok(w1.cards && w1.cards.length === 3, '公布后所有人能看到赢家的牌');
+  assert.strictEqual(view.revealWinner, true);
+
+  // 开牌局（真正的摊牌，而非弃牌获胜）不可调用 revealWin
+  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60 });
+  room2.startHand(room2.order[0]);
+  forceCards(room2, room2.order[0], [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room2, room2.order[1], [card('S', 5), card('H', 6), card('D', 7)]);
+  let guard2 = 0;
+  while (room2.phase === 'playing' && guard2++ < 50) {
+    const opts = room2.optionsFor(room2.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room2.act(room2.turnId, 'call');
+    else room2.act(room2.turnId, 'fold');
+  }
+  assert.strictEqual(room2.phase, 'showdown');
+  assert.strictEqual(room2.lastResult.singleWin, undefined, '达到总注封顶是开牌，不是弃牌获胜');
+  assert.throws(() => room2.revealWin(room2.order[0]), /不是弃牌获胜/);
+});
+
+test('每轮局数：打满后停止自动连开，继续玩则再开一轮', () => {
+  const room = newRoom(2, {
+    ...QUIET,
+    turnSeconds: 0,
+    maxPot: 60,
+    autoNext: true,
+    autoNextSeconds: 30,
+    sessionHands: 2
+  });
+  const [a, b] = room.order;
+
+  const playOne = () => {
+    room.startHand(a);
+    forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+    forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+    room.turnId = a;
+    room.act(a, 'compare', { target: b });
+  };
+
+  playOne(); // 第 1 局
+  assert.strictEqual(room.lastResult.sessionOver, undefined, '没打满不该标记结束');
+  assert.ok(room.nextHandAt > 0, '未打满应排自动连开');
+
+  playOne(); // 第 2 局
+  assert.strictEqual(room.handNo, 2);
+  assert.strictEqual(room.lastResult.sessionOver, true, '打满 2 局应标记本轮结束');
+  assert.strictEqual(room.nextHandAt, 0, '本轮结束不应自动连开');
+
+  // 继续玩：再开同样局数的一轮
+  room.nextHand(a);
+  assert.strictEqual(room.phase, 'playing');
+  assert.strictEqual(room.config.sessionHands, 4, '继续后应再给 2 局（累计到 4）');
+  assert.strictEqual(room.handNo, 3);
 });
 
 test('看牌不是回合动作：没轮到自己也能看（HTTP /api/look 与 action=look 行为一致）', () => {
@@ -727,7 +810,7 @@ test('掉线托管：真人断线后超宽限期由系统代打，牌局不卡�
 // ------------------------------------------------------------ 观战
 
 test('观战：不占座位、不能操作、看不到暗牌、开牌后可见', () => {
-  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 200 });
   const [a, b, c] = room.order;
   const spec = room.addSpectator('观众甲');
 
@@ -757,14 +840,18 @@ test('观战：不占座位、不能操作、看不到暗牌、开牌后可见',
   assert.strictEqual(pv.spectating, false);
   assert.strictEqual(pv.spectators[0].name, '观众甲');
 
-  // 开牌后，观战者能看到参与摊牌者的牌
+  // 开牌后，观战者能看到参与摊牌者的牌（打到总注封顶开牌）
   forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
   forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
   forceCards(room, c, [card('C', 9), card('C', 2), card('C', 3)]);
-  room.turnId = a;
-  room.act(a, 'compare', { target: b }); // a 赢，剩 a、c
-  room.turnId = a;
-  room.act(a, 'compare', { target: c });
+  let guard2 = 0;
+  while (room.phase === 'playing' && guard2++ < 200) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+    if (room.phase !== 'playing') break;
+  }
   assert.strictEqual(room.phase, 'showdown');
 
   const sv = room.serialize(spec.id);

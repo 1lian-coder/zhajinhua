@@ -2479,3 +2479,88 @@ input {
   .table-oval { width: 90%; height: 56%; }
   .pot-val { font-size: clamp(22px, 8.6vw, 30px); }
 }
+
+/* ==================== 结算个人输赢 / 公布牌 / 本轮结束 ==================== */
+
+.my-result {
+  margin: 4px 0 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 1px;
+}
+.my-result b { font-size: 22px; }
+.my-result.win  { color: #ffe9a8; background: rgba(232, 195, 122, .14); border: 1px solid rgba(232, 195, 122, .45); }
+.my-result.lose { color: #ffb4a8; background: rgba(255, 90, 70, .10); border: 1px solid rgba(255, 90, 70, .3); }
+.my-result.folded { color: #c9d6cf; background: rgba(160, 190, 175, .10); border: 1px solid rgba(160, 190, 175, .25); font-size: 14px; font-weight: 600; }
+.my-result.watch { color: #bcd6ff; background: rgba(120, 170, 255, .10); border: 1px solid rgba(120, 170, 255, .3); font-size: 14px; font-weight: 600; }
+
+.reveal-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(120, 170, 255, .08);
+  border: 1px solid rgba(120, 170, 255, .28);
+  font-size: 12.5px;
+  color: #cfe0f5;
+  text-align: center;
+}
+.reveal-choice.done {
+  color: #b9e8c9;
+  background: rgba(120, 220, 150, .08);
+  border-color: rgba(120, 220, 150, .3);
+}
+
+.session-over {
+  margin: 0 0 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(232, 195, 122, .08);
+  border: 1px solid rgba(232, 195, 122, .35);
+  text-align: center;
+}
+.session-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffe2a6;
+  margin-bottom: 10px;
+}
+.session-btns {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.session-btns .btn { flex: 1 1 0; max-width: 160px; }
+
+.auto-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(120, 190, 160, .06);
+  border: 1px dashed rgba(120, 190, 160, .28);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.folded-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-style: normal;
+  color: #ffb0a5;
+  background: rgba(255, 90, 70, .15);
+  border: 1px solid rgba(255, 90, 70, .35);
+  vertical-align: middle;
+}
