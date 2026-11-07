@@ -524,6 +524,34 @@ const api = {
     return { ok: true, rooms: list };
   },
 
+  /** 借分：propose（发起）/ accept（同意）/ decline（拒绝）。双方都要同意才生效。
+   *  propose 支持两种方向：body.to = 借给谁（我当出借方），body.from = 向谁借（我当借款方） */
+  async loan(body) {
+    const { room, player } = authPlayer(body);
+    const op = String(body.op || '');
+    let loan;
+    if (op === 'propose') {
+      const to = String(body.to || '');
+      const from = String(body.from || '');
+      if (to) {
+        loan = room.proposeLoan(player.id, to, body.amount);
+      } else if (from) {
+        loan = room.proposeLoan(from, player.id, body.amount);
+      } else {
+        throw userError('请指定借分对象');
+      }
+    } else if (op === 'accept') {
+      loan = room.acceptLoan(String(body.loanId || ''), player.id);
+    } else if (op === 'decline') {
+      loan = room.declineLoan(String(body.loanId || ''), player.id);
+    } else {
+      throw userError('未知的借分操作');
+    }
+    markDirty();
+    broadcast(room);
+    return { ok: true, loan };
+  },
+
   /** 弃牌获胜后，赢家公布自己的牌 */
   async reveal(body) {
     const { room, player } = authPlayer(body);

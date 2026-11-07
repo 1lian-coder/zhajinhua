@@ -254,3 +254,19 @@ SSE 长连接。事件类型：
 - 不修改 `server.js` / `lib/`（那边由 Lead 负责）
 - 通过 `fetch('/api/...')` 调用；SSE 用 `new EventSource('/api/events?...')`
 - 需兼容微信内置浏览器（iOS Safari / Android WebView）：避免过新语法（可选链 `?.` 和 `??` 可以，`Array.prototype.at` 少用）
+### POST /api/loan
+借分（双方同意才生效）。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"…", "op":"propose", "to":"p2", "amount":200 }
+{ "roomId":"837261", "playerId":"p1", "token":"…", "op":"propose", "from":"p2", "amount":200 }
+{ "roomId":"837261", "playerId":"p1", "token":"…", "op":"accept",  "loanId":"L3" }
+{ "roomId":"837261", "playerId":"p1", "token":"…", "op":"decline", "loanId":"L3" }
+```
+`propose` 支持两个方向：`to`（我借给对方）/ `from`（我向对方借）。对方筹码低于底注时才需要借分。
+同意后筹码从出借方转到借入方，借入方 `debt` 累加。
+
+### state 里与借分/比牌相关字段
+- `players[].debt`：该玩家累计借分（展示用）
+- `myDebt`：我的累计借分
+- `loans`：最近借分记录 `{ id, from, fromName, to, toName, amount, status(pending/accepted/declined), at }`
+- `myCompare`：**仅比牌双方可见**，最近一次比牌 `{ a,aName,aCards, b,bName,bCards, winner, at }`

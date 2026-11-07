@@ -429,7 +429,7 @@ test('开牌时公开所有参与者的牌（含已弃牌者），但开牌前�
   room.act(a, 'fold');
 
   // 开牌前：a 的牌不该被别看到
-  const midView = room.serialize(b.id);
+  const midView = room.serialize(b);
   const midFolded = midView.players.find((p) => p.id === a);
   assert.strictEqual(midFolded.cards, null, '开牌前弃牌者的牌不能泄露');
 
@@ -443,7 +443,7 @@ test('开牌时公开所有参与者的牌（含已弃牌者），但开牌前�
   }
   assert.strictEqual(room.phase, 'showdown');
 
-  const view = room.serialize(b.id);
+  const view = room.serialize(b);
   const foldedView = view.players.find((p) => p.id === a);
   assert.strictEqual(foldedView.folded, true);
   assert.ok(foldedView.cards && foldedView.cards.length === 3, '开牌后弃牌者的牌也应公开');
@@ -469,7 +469,7 @@ test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代�
   assert.strictEqual(room.revealWinner, null);
 
   // 默认不公布：别人看不到赢家的牌
-  let view = room.serialize(b.id);
+  let view = room.serialize(b);
   const w0 = view.players.find((p) => p.id === a);
   assert.strictEqual(w0.cards, null, '未公布时看不到赢家的牌');
 
@@ -479,7 +479,7 @@ test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代�
   // 赢家公布
   room.revealWin(a);
   assert.strictEqual(room.revealWinner, true);
-  view = room.serialize(b.id);
+  view = room.serialize(b);
   const w1 = view.players.find((p) => p.id === a);
   assert.ok(w1.cards && w1.cards.length === 3, '公布后所有人能看到赢家的牌');
   assert.strictEqual(view.revealWinner, true);
@@ -807,7 +807,89 @@ test('掉线托管：真人断线后超宽限期由系统代打，牌局不卡�
   assert.strictEqual(room.botTick(Date.now()), false, '在线真人的回合绝不代打');
 });
 
-// ------------------------------------------------------------ 观战
+// ------------------------------------------------------------ 比牌亮牌 / 借分
+
+test('比牌：双方都能看到彼此的牌，无关玩家看不到', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+
+  const va = room.serialize(a);
+  const vb = room.serialize(b);
+  const vc = room.serialize(c);
+
+  assert.ok(va.myCompare, '主动比牌者能看到双方牌');
+  assert.strictEqual(va.myCompare.aCards.length, 3);
+  assert.strictEqual(va.myCompare.bCards.length, 3);
+  assert.ok(vb.myCompare, '被比牌的一方也能看到双方牌');
+  assert.strictEqual(vb.myCompare.aCards.length, 3);
+  assert.strictEqual(vc.myCompare, null, '无关玩家看不到比牌的牌');
+
+  // 比牌信息不落进公开的 players 字段
+  const leaked = vc.players.filter((p) => p.cards && p.cards.length === 3);
+  assert.strictEqual(leaked.length, 0, '无关玩家看不到暗牌');
+});
+
+test('借分：需要对方同意才到账，金额与条件都有校验', () => {
+  const room = newRoom(3, { ...QUIET, autoRebuy: false, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  const pb = room.players.get(b);
+  pb.chips = 0; // b 输光了
+
+  assert.throws(() => room.proposeLoan(a, b, 0), /金额无效/);
+  assert.throws(() => room.proposeLoan(a, b, 99999), /最多 5000/);
+  assert.throws(() => room.proposeLoan(a, c, 100), /不需要借分/, '对方还有筹码不该借');
+  assert.throws(() => room.proposeLoan(a, a, 100), /不能借给自己/);
+
+  const loan = room.proposeLoan(a, b, 200);
+  assert.strictEqual(loan.status, 'pending');
+  const chipsA = room.players.get(a).chips;
+  const chipsB = room.players.get(b).chips;
+  assert.strictEqual(chipsB, 0, '同意前不到账');
+
+  // 无关的人不能同意/拒绝
+  assert.throws(() => room.acceptLoan(loan.id, c), /与你无关/);
+  assert.throws(() => room.declineLoan(loan.id, c), /与你无关/);
+
+  // 对方同意后到账
+  room.acceptLoan(loan.id, b);
+  assert.strictEqual(room.players.get(a).chips, chipsA - 200);
+  assert.strictEqual(room.players.get(b).chips, chipsB + 200);
+  assert.strictEqual(room.players.get(b).debt, 200, '借分记在债务里');
+  assert.strictEqual(room.serialize(b).myDebt, 200);
+  assert.strictEqual(room.serialize(a).loans[0].status, 'accepted');
+
+  // 已经处理过的不能再操作
+  assert.throws(() => room.acceptLoan(loan.id, b), /处理过了/);
+
+  // 拒绝流程（再把 b 的筹码清零才符合"需要借分"的条件）
+  room.players.get(b).chips = 0;
+  const loan2 = room.proposeLoan(a, b, 100);
+  room.declineLoan(loan2.id, b);
+  assert.strictEqual(loan2.status, 'declined');
+  assert.strictEqual(room.players.get(b).chips, 0, '拒绝后不到账');
+});
+
+test('借分：关闭自动补筹码后，筹码输光的人进不了下一局', () => {
+  const room = newRoom(3, { ...QUIET, autoRebuy: false, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  // 快速打完一局
+  room.turnId = b;
+  room.act(b, 'fold');
+  room.turnId = c;
+  room.act(c, 'fold');
+  assert.strictEqual(room.phase, 'showdown');
+
+  // 把 b 筹码清零，再开一局：b 应被排除
+  room.players.get(b).chips = 0;
+  room.nextHand(a);
+  assert.strictEqual(room.phase, 'playing');
+  assert.strictEqual(room.players.get(b).inHand, false, '筹码不足且不自动补，无法入局');
+  assert.strictEqual(room.players.get(c).inHand, true);
+});
 
 test('观战：不占座位、不能操作、看不到暗牌、开牌后可见', () => {
   const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 200 });

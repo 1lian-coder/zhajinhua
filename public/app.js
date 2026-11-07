@@ -387,8 +387,12 @@
     currentScreen = name;
     $('screen-home').hidden = name !== 'home';
     $('screen-table').hidden = name !== 'table';
-    if (name === 'table') startTicker();
-    else stopTicker();
+    if (name === 'table') {
+      startTicker();
+      setTimeout(fitStage, 60);
+    } else {
+      stopTicker();
+    }
     if (name === 'home') startRoomListPolling();
     else stopRoomListPolling();
   }
@@ -1381,6 +1385,211 @@
     });
   }
 
+  /* ------------------------------------ 借分 / 玩家详情 / 比牌亮牌 / 自适应 */
+
+  var lastCompareAt = 0;
+  var loanBarSig = '';
+  var compareTimer = null;
+  var fitTimer = null;
+
+  /** 自适应：按屏幕可用高度设置牌桌高度 */
+  function fitStage() {
+    var stage = $('table-stage');
+    if (!stage) return;
+    var topbar = document.querySelector('.topbar');
+    var footer = document.querySelector('.bottom-bar');
+    var myArea = $('my-area');
+    var vh = window.innerHeight || 800;
+    var used = (topbar ? topbar.offsetHeight : 0) +
+      (footer ? footer.offsetHeight : 0) +
+      (myArea ? myArea.offsetHeight : 0);
+    var h = Math.max(300, Math.min(vh - used - 8, 720));
+    stage.style.height = h + 'px';
+    scheduleSeatLayout();
+  }
+
+  function scheduleFit() {
+    if (fitTimer) clearTimeout(fitTimer);
+    fitTimer = setTimeout(function () {
+      fitTimer = null;
+      fitStage();
+    }, 220);
+  }
+
+  /** 借分请求条：待处理的借分（我借给别人 / 别人借给我） */
+  function renderLoanBar(st) {
+    var bar = $('loan-bar');
+    if (!bar) return;
+    var me = meId();
+    var pending = [];
+    var loans = st.loans || [];
+    for (var i = 0; i < loans.length; i++) {
+      var l = loans[i];
+      if (l.status === 'pending' && (l.to === me || l.from === me)) pending.push(l);
+    }
+    var sig = pending.map(function (l) { return l.id; }).join('|');
+    if (sig === loanBarSig) return;
+    loanBarSig = sig;
+    if (!pending.length) {
+      bar.hidden = true;
+      bar.innerHTML = '';
+      return;
+    }
+    var html = '';
+    for (var k = 0; k < pending.length; k++) {
+      var p = pending[k];
+      if (p.to === me) {
+        html += '<div class="loan-item">💰 <b>' + esc(p.fromName) + '</b> 想借 <b>' + esc(p.amount) + '</b> 分给你' +
+          ' <button class="btn btn-primary btn-small" data-loan="accept" data-id="' + esc(p.id) + '">同意</button>' +
+          ' <button class="btn btn-ghost btn-small" data-loan="decline" data-id="' + esc(p.id) + '">拒绝</button></div>';
+      } else {
+        html += '<div class="loan-item">⏳ 已向 <b>' + esc(p.toName) + '</b> 借 <b>' + esc(p.amount) + '</b> 分，等对方同意' +
+          ' <button class="btn btn-ghost btn-small" data-loan="decline" data-id="' + esc(p.id) + '">撤回</button></div>';
+      }
+    }
+    bar.innerHTML = html;
+    bar.hidden = false;
+    var btns = bar.querySelectorAll('[data-loan]');
+    for (var b = 0; b < btns.length; b++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          api('/api/loan', {
+            roomId: session.roomId,
+            playerId: session.playerId,
+            token: session.token,
+            op: btn.getAttribute('data-loan'),
+            loanId: btn.getAttribute('data-id')
+          }).then(function (res) {
+            btn.disabled = false;
+            if (!res || !res.ok) toast((res && res.error) || '操作失败', 'err');
+            else if (btn.getAttribute('data-loan') === 'accept') toast('借分已到账', 'ok');
+          });
+        });
+      })(btns[b]);
+    }
+  }
+
+  /** 比牌亮牌：比牌双方都能看到彼此的牌 */
+  function renderCompare(st) {
+    var panel = $('compare-panel');
+    if (!panel) return;
+    var c = st.myCompare;
+    if (!c || c.at === lastCompareAt) return;
+    lastCompareAt = c.at;
+    var me = meId();
+    var mine = c.a === me ? c.aCards : c.bCards;
+    var theirs = c.a === me ? c.bCards : c.aCards;
+    var otherName = c.a === me ? c.bName : c.aName;
+    var iWin = c.winner === me;
+    var html = '<div class="cp-title ' + (iWin ? 'win' : 'lose') + '">' +
+      (iWin ? '🎉 比牌：你赢了' : '💧 比牌：你输了') + '</div>' +
+      '<div class="cp-row"><span class="cp-who">你</span>' + cardListHtml(mine) + '</div>' +
+      '<div class="cp-row"><span class="cp-who">' + esc(otherName) + '</span>' + cardListHtml(theirs) + '</div>' +
+      '<button id="btn-close-compare" class="btn btn-ghost btn-small" type="button">知道了</button>';
+    panel.innerHTML = html;
+    panel.hidden = false;
+    panel.className = 'compare-panel show';
+    var closeBtn = panel.querySelector('#btn-close-compare');
+    if (closeBtn) closeBtn.addEventListener('click', function () { panel.hidden = true; });
+    if (compareTimer) clearTimeout(compareTimer);
+    compareTimer = setTimeout(function () { panel.hidden = true; }, 10000);
+  }
+
+  function cardListHtml(cards) {
+    var h = '';
+    for (var i = 0; i < cards.length; i++) h += miniCardHtml(cards[i]);
+    return h;
+  }
+
+  /** 点击座位：查看对方筹码 / 净分 / 战绩，并且可以借分 */
+  function openPlayerDetail(pid) {
+    var st = state;
+    if (!st) return;
+    var p = findPlayer(st, pid);
+    if (!p) return;
+    var me = findPlayer(st, meId());
+    var ante = (st.config && st.config.ante) || 10;
+    var myChips = me ? me.chips : 0;
+    var stat = p.stats || { hands: 0, wins: 0, best: 0 };
+    var isSelf = meId() === p.id;
+
+    var html = '<div class="pd-head">' + esc(p.name) + '</div>';
+    html += '<div class="pd-grid">';
+    html += '<span>筹码</span><b>' + esc(p.chips) + '</b>';
+    html += '<span>本局下注</span><b>' + esc(p.bet || 0) + '</b>';
+    html += '<span>净分</span><b class="' + (p.net > 0 ? 'pd-pos' : (p.net < 0 ? 'pd-neg' : '')) + '">' + fmtSigned(p.net) + '</b>';
+    html += '<span>战绩</span><b>' + esc(stat.hands) + ' 局 / ' + esc(stat.wins) + ' 胜 · 最大赢池 ' + esc(stat.best) + '</b>';
+    if (p.debt) html += '<span>欠分</span><b class="pd-neg">' + esc(p.debt) + '</b>';
+    html += '</div>';
+
+    if (!isSelf) {
+      if (p.chips < ante && myChips >= 50) {
+        html += '<button class="btn btn-primary" id="pd-lend" type="button">借给他分（帮他补筹码）</button>';
+      }
+      if (myChips < ante && p.chips >= 50) {
+        html += '<button class="btn btn-primary" id="pd-borrow" type="button">向他借分</button>';
+      }
+    }
+    html += '<div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">关闭</button></div>';
+
+    var root = showModal(html, { title: isSelf ? '我的信息' : '玩家信息' });
+    var lendBtn = root.querySelector('#pd-lend');
+    if (lendBtn) {
+      lendBtn.addEventListener('click', function () {
+        closeModal();
+        chooseLoanAmount('lend', p.id, p.name);
+      });
+    }
+    var borrowBtn = root.querySelector('#pd-borrow');
+    if (borrowBtn) {
+      borrowBtn.addEventListener('click', function () {
+        closeModal();
+        chooseLoanAmount('borrow', p.id, p.name);
+      });
+    }
+  }
+
+  function chooseLoanAmount(direction, otherId, otherName) {
+    var opts = [100, 200, 500, 1000];
+    var label = direction === 'lend'
+      ? ('借给「' + otherName + '」多少分？对方同意后才到账')
+      : ('向「' + otherName + '」借多少分？对方同意后才到账');
+    var html = '<p class="tips">' + esc(label) + '</p><div class="opt-list">';
+    for (var i = 0; i < opts.length; i++) {
+      html += '<button type="button" class="opt-btn" data-amt="' + opts[i] + '">' +
+        '<span class="opt-main">' + opts[i] + ' 分</span></button>';
+    }
+    html += '</div><div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">取消</button></div>';
+    var root = showModal(html, { title: '借分金额' });
+    var btns = root.querySelectorAll('.opt-btn');
+    for (var k = 0; k < btns.length; k++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          var amt = Number(btn.getAttribute('data-amt'));
+          closeModal();
+          postLoan(direction, otherId, amt);
+        });
+      })(btns[k]);
+    }
+  }
+
+  function postLoan(direction, otherId, amount) {
+    var body = {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      op: 'propose',
+      amount: amount
+    };
+    if (direction === 'lend') body.to = otherId;
+    else body.from = otherId;
+    api('/api/loan', body).then(function (res) {
+      if (!res || !res.ok) toast((res && res.error) || '借分失败', 'err');
+      else toast('已发出借分请求，等对方同意', 'ok');
+    });
+  }
+
   /* ------------------------------------------------------------------ 渲染 */
 
   /* ------------------------------------------------------- 快捷聊天 */
@@ -1569,9 +1778,12 @@
     renderMyArea(st);
     renderLogs(st);
     renderBottom(st);
+    renderLoanBar(st);
+    renderCompare(st);
     handleChat(st);
     handleActions(st);
     handleTurnAlert(st);
+    scheduleFit();
     tick();
 
     // 抢庄刚结束、进入下注阶段：台面中央闪一下「庄家：xxx」
@@ -1798,6 +2010,11 @@
         badges.appendChild(bi);
       }
       seat.appendChild(badges);
+
+      // 点击座位：查看对方信息 / 借分
+      (function (pid) {
+        seat.addEventListener('click', function () { openPlayerDetail(pid); });
+      })(p.id);
 
       wrap.appendChild(seat);
     }
@@ -3194,6 +3411,10 @@
       if ($('act-look').disabled) return;
       doLook();
     });
+    // 点击自己的信息条：查看自己的筹码/净分（也支持借分入口）
+    $('my-seat').addEventListener('click', function () {
+      if (state) openPlayerDetail(meId());
+    });
     $('act-compare').addEventListener('click', function () {
       if ($('act-compare').disabled) return;
       doCompare();
@@ -3226,9 +3447,14 @@
       }
     });
 
-    // 屏幕旋转 / 宽度变化后重排椭圆座位
-    window.addEventListener('resize', scheduleSeatLayout);
-    window.addEventListener('orientationchange', function () { setTimeout(scheduleSeatLayout, 200); });
+    // 屏幕旋转 / 宽度变化后重排座位，并让牌桌自适应屏幕
+    window.addEventListener('resize', function () {
+      fitStage();
+      scheduleSeatLayout();
+    });
+    window.addEventListener('orientationchange', function () {
+      setTimeout(function () { fitStage(); scheduleSeatLayout(); }, 200);
+    });
 
     window.addEventListener('online', function () {
       if (session && !connected) scheduleVerify(500);
