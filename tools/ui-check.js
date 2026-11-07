@@ -502,6 +502,34 @@ async function main() {
   );
   console.log(`✓ 本局走完，phase=${final.phase}，共 ${acted} 次操作`);
 
+  // ---- 新功能 DOM 检查 ----
+  {
+    const ui = await cdp.eval(`(() => {
+      const chatBtn = document.getElementById('btn-chat');
+      const soundBtn = document.getElementById('btn-sound');
+      const allinBtn = document.getElementById('act-allin');
+      const statsCol = document.querySelector('#panel-result .rank-stats');
+      const thead = document.querySelector('#panel-result .rank-table thead');
+      const allinBadge = document.querySelector('.seat .badge.allin, #panel-result .allin-tag');
+      return JSON.stringify({
+        chatBtn: !!chatBtn,
+        soundBtn: !!soundBtn,
+        allinBtnExists: !!allinBtn,
+        statsColInResult: !!statsCol,
+        statsText: statsCol ? statsCol.textContent.trim() : '',
+        theadHasZhanJi: !!(thead && thead.textContent.indexOf('战绩') >= 0),
+        allinSeenSomewhere: !!allinBadge
+      });
+    })()`);
+    const u = JSON.parse(ui);
+    console.log('  新功能 DOM: ' + ui);
+    if (!u.chatBtn || !u.soundBtn || !u.allinBtnExists || !u.statsColInResult || !u.theadHasZhanJi) {
+      throw new Error('新功能 UI 元素缺失: ' + ui);
+    }
+    console.log('✓ 聊天按钮/声音开关/孤注一掷按钮/战绩列 均已渲染');
+  }
+
+
   await sleep(900);
   await cdp.eval('window.scrollTo(0, 0)');
   await shot('05-result');

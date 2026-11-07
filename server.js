@@ -441,6 +441,15 @@ const api = {
     return { ok: true };
   },
 
+  /** 快捷聊天 */
+  async chat(body) {
+    const { room, player } = authPlayer(body);
+    if (rateLimited('chat:' + player.id, 2)) throw userError('说太快啦，歇一下');
+    room.addChat(player.id, body.text);
+    broadcast(room);
+    return { ok: true };
+  },
+
   async config(body) {
     const { room, player } = authPlayer(body);
     room.setConfig(body.config, player.id);

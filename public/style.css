@@ -1624,6 +1624,115 @@ input {
   font-size: 12px;
 }
 
+/* ==================== 孤注一掷（全下） ==================== */
+
+.badge.allin {
+  color: #ffd479;
+  background: rgba(232, 178, 61, .18);
+  border-color: rgba(232, 178, 61, .5);
+}
+
+.seat.allin:not(.folded) {
+  border-color: rgba(232, 178, 61, .55);
+  box-shadow: 0 0 0 1px rgba(232, 178, 61, .3) inset;
+}
+
+.act-allin .act-main {
+  color: #ffd479;
+}
+
+.allin-tag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-style: normal;
+  color: #ffd479;
+  background: rgba(232, 178, 61, .18);
+  border: 1px solid rgba(232, 178, 61, .45);
+}
+
+/* ==================== 快捷聊天 ==================== */
+
+.seat,
+.my-area {
+  position: relative;
+}
+
+.chat-bubble {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translate(-50%, 6px);
+  z-index: 30;
+  max-width: 150px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(20, 40, 32, .96);
+  border: 1px solid rgba(232, 195, 122, .4);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .22s ease, transform .22s ease;
+}
+
+.chat-bubble.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.chat-bubble.hide {
+  opacity: 0;
+  transform: translate(-50%, -4px);
+}
+
+.chat-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.chat-q {
+  min-width: 0;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input-row .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ==================== 战绩列 ==================== */
+
+.rank-table th {
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--dim);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.rank-stats {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ==================== 加载/连通性兜底提示 ==================== */
 
 .dead-banner {

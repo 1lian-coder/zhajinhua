@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /**
  * 引擎测试：牌型判定 + 规则校验 + 随机对局不变量
@@ -560,4 +560,187 @@ test('人机：决策函数覆盖强弱牌路径，且落盘恢复后人机身�
   assert.ok(BOT_NAMES.includes(rb.name) || rb.name.startsWith('人机'));
   assert.strictEqual(restored.hostId, me.id, '恢复后房主仍是真人');
   void handScore;
+});
+
+// ------------------------------------------------------------ 孤注一掷 + 侧池
+
+function forceCards(room, pid, cards) {
+  room.players.get(pid).cards = cards;
+}
+
+test('孤注一掷：跟不起时可选，全下后留在牌局、跳过轮转，直接开牌', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+
+  // 把 a 的筹码弄到只够孤注一掷
+  const pa = room.players.get(a);
+  pa.chips = 5;
+  room.turnId = a;
+
+  const opts = room.optionsFor(a);
+  const allinOpt = opts.find((o) => o.type === 'allin');
+  assert.ok(allinOpt, '跟不起时应提供孤注一掷');
+  assert.strictEqual(allinOpt.cost, 5);
+  assert.ok(!opts.find((o) => o.type === 'call'), '跟不起时不应有跟注');
+  assert.ok(!opts.find((o) => o.type === 'compare'), '跟不起时不应有比牌');
+
+  room.act(a, 'allin', {});
+  assert.strictEqual(pa.allIn, true);
+  assert.strictEqual(pa.chips, 0);
+  assert.strictEqual(pa.bet, QUIET.ante + 5);
+
+  // b、c 还能行动（a 被跳过轮转）
+  assert.notStrictEqual(room.turnId, a);
+
+  // 筹码足够时不能孤注一掷
+  room.turnId = room.turnId; // 当前行动人筹码充足
+  assert.throws(() => room.act(room.turnId, 'allin', {}), /直接跟注/);
+  void b; void c;
+});
+
+test('侧池：全下者只能赢到对手匹配的部分，多投入者拿回差额', () => {
+  // A 豹子（大）、B 顺子、C 弃牌
+  // 投入：A=100, B=40(全下), C=20(弃牌) → 总池 160
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 99999 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  forceCards(room, c, [card('C', 9), card('C', 2), card('C', 3)]);
+
+  // 手工构造投入：ante=10 各自已出
+  const pa = room.players.get(a);
+  const pb = room.players.get(b);
+  const pc = room.players.get(c);
+  room.takeChips(pa, 90); room.takeChips(pb, 30); room.takeChips(pc, 10); // 走账目系统
+  pa.bet = 100; pb.bet = 40; pc.bet = 20;
+  pa.allIn = false; pb.allIn = true;
+  pc.folded = true;
+  room.pot = 160;
+  room.phase = 'playing';
+
+  // A 赢：层 20×3=60 给 A；层 20×2=40 给 A；层 60×1=60 给 A → A +160
+  room.settleShowdown('测试A赢');
+  let gotA = room.lastResult.winners.find((w) => w.id === a);
+  assert.strictEqual(gotA.amount, 160, `A 应赢整池 160，实际 ${gotA.amount}`);
+  assert.strictEqual([...room.players.values()].reduce((s, p) => s + p.net, 0), 0);
+
+  // B 赢：B 只能赢到层 40（60+40=100），A 拿回最高层 60
+  const room2 = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 99999 });
+  room2.startHand(room2.order[0]);
+  const [x, y, z] = room2.order;
+  forceCards(room2, x, [card('S', 2), card('H', 7), card('D', 9)]); // 弱
+  forceCards(room2, y, [card('S', 5), card('H', 6), card('D', 7)]); // 顺子
+  forceCards(room2, z, [card('C', 9), card('C', 2), card('C', 3)]);
+  const px = room2.players.get(x);
+  const py = room2.players.get(y);
+  const pz = room2.players.get(z);
+  room2.takeChips(px, 90); room2.takeChips(py, 30); room2.takeChips(pz, 10); // 走账目系统
+  px.bet = 100; py.bet = 40; pz.bet = 20;
+  py.allIn = true;
+  pz.folded = true;
+  room2.pot = 160;
+  room2.phase = 'playing';
+
+  room2.settleShowdown('测试B赢');
+  const gotY = room2.lastResult.winners.find((w) => w.id === y);
+  const gotX = room2.lastResult.winners.find((w) => w.id === x);
+  assert.strictEqual(gotY.amount, 100, `B 全下只应赢 100，实际 ${gotY.amount}`);
+  assert.strictEqual(gotX.amount, 60, `A 应拿回未被匹配的 60，实际 ${gotX.amount}`);
+  assert.strictEqual([...room2.players.values()].reduce((s, p) => s + p.net, 0), 0, '侧池结算必须零和');
+});
+
+test('只剩一人能行动时自动开牌（其余全下）', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 99999 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  const pa = room.players.get(a);
+  const pb = room.players.get(b);
+  pa.chips = 5;
+  room.turnId = a;
+  room.act(a, 'allin', {});
+
+  // 只剩 b 能行动 → 立即开牌
+  assert.strictEqual(room.phase, 'showdown');
+  assert.strictEqual(room.lastResult.reason, '其余玩家已全下，直接开牌');
+  assert.ok(room.lastResult.showdown.length === 2, '两人都参与开牌');
+  assert.strictEqual([...room.players.values()].reduce((s, p) => s + p.net, 0), 0);
+  void pb;
+});
+
+// ------------------------------------------------------------ 掉线托管
+
+test('掉线托管：真人断线后超宽限期由系统代打，牌局不卡；重连即恢复', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0 });
+  const [a, b] = room.order;
+  room.startHand(a);
+
+  const pb = room.players.get(b);
+  pb.connected = false; // 掉线
+  room.turnId = b;
+
+  // 宽限期内不代打
+  const t0 = Date.now();
+  room.turnStartedAt = t0 - 29999;
+  assert.strictEqual(room.botTick(t0), false, '30 秒宽限内不应托管');
+
+  // 过了宽限期自动代打
+  room.turnStartedAt = t0 - 31000;
+  const acted = room.botTick(t0);
+  assert.strictEqual(acted, true, '宽限期过后应托管出牌');
+  assert.notStrictEqual(room.turnId, b, '托管后应轮转到下一个人');
+
+  // 在线真人不托管
+  const pa = room.players.get(a);
+  pa.connected = true;
+  room.turnId = a;
+  room.turnStartedAt = t0 - 999999;
+  assert.strictEqual(room.botTick(Date.now()), false, '在线真人的回合绝不代打');
+});
+
+// ------------------------------------------------------------ 战绩与聊天
+
+test('战绩统计：参与/胜局/最大赢池随对局累计，且落盘保留', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+
+  assert.strictEqual(room.phase, 'showdown');
+  assert.strictEqual(room.stats[a].hands, 1);
+  assert.strictEqual(room.stats[a].wins, 1);
+  assert.strictEqual(room.stats[a].best, room.lastResult.winners[0].amount);
+  assert.strictEqual(room.stats[b].hands, 1);
+  assert.strictEqual(room.stats[b].wins, 0);
+
+  // 落盘往返
+  const raw = JSON.parse(JSON.stringify(room.toJSON()));
+  const restored = Room.fromJSON(raw);
+  assert.deepStrictEqual(restored.stats[a], room.stats[a], '战绩应随落盘保留');
+});
+
+test('快捷聊天：清洗、限长、带序号；不过滤表情', () => {
+  const room = newRoom(2, QUIET);
+  const [a, b] = room.order;
+
+  room.addChat(a, '  快点啦  ');
+  room.addChat(b, '哈哈😄'.repeat(10)); // 20 个字符（emoji 计 1）
+  room.addChat(a, 'a'.repeat(50));
+
+  assert.strictEqual(room.chat.length, 3);
+  assert.strictEqual(room.chat[0].text, '快点啦');
+  assert.strictEqual(room.chat[1].text.length <= 30, true, '超长应被截断');
+  assert.strictEqual(room.chat[2].text.length, 30);
+  assert.ok(room.chat[0].seq < room.chat[1].seq && room.chat[1].seq < room.chat[2].seq, 'seq 递增');
+
+  assert.throws(() => room.addChat(a, '   '), /说点什么/);
+  assert.throws(() => room.addChat('ghost', 'hi'), /玩家不存在/);
+
+  const view = room.serialize(a);
+  assert.strictEqual(view.chat.length, 3);
+  assert.strictEqual(view.chatSeq, 3);
 });

@@ -830,6 +830,169 @@
 
   /* ------------------------------------------------------------------ 渲染 */
 
+  /* ------------------------------------------------------- 快捷聊天 */
+
+  var lastChatSeq = 0;
+  var CHAT_QUICK = ['快点啦~', '哈哈', '稳住，能赢', '不敢跟了', '好牌！', '发牌吧', '走了走了', '再来一局'];
+
+  function handleChat(st) {
+    var list = st.chat || [];
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      if (m.seq > lastChatSeq) {
+        lastChatSeq = m.seq;
+        showChatBubble(m.id, m.text);
+      }
+    }
+    if (st.chatSeq != null && st.chatSeq < lastChatSeq) lastChatSeq = st.chatSeq; // 重连后序列回卷
+  }
+
+  function showChatBubble(pid, text) {
+    var seat = document.querySelector('.seat[data-pid="' + pid + '"]');
+    var host = seat || $('my-area');
+    if (!host) return;
+    // 移除该座位旧气泡
+    var old = host.querySelector('.chat-bubble');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var b = document.createElement('div');
+    b.className = 'chat-bubble';
+    b.textContent = text;
+    host.appendChild(b);
+    // 强制重排后加动画类
+    void b.offsetWidth;
+    b.className += ' show';
+    setTimeout(function () {
+      b.className = 'chat-bubble hide';
+      setTimeout(function () {
+        if (b.parentNode) b.parentNode.removeChild(b);
+      }, 260);
+    }, 2600);
+  }
+
+  function openChatDialog() {
+    var html = '<div class="chat-quick">';
+    for (var i = 0; i < CHAT_QUICK.length; i++) {
+      html += '<button type="button" class="btn btn-ghost chat-q" data-t="' + esc(CHAT_QUICK[i]) + '">' + esc(CHAT_QUICK[i]) + '</button>';
+    }
+    html += '</div>';
+    html += '<div class="chat-input-row">' +
+      '<input id="chat-input" class="input" type="text" maxlength="30" placeholder="说点什么（30 字内）" enterkeyhint="send">' +
+      '<button id="chat-send" class="btn btn-primary" type="button">发送</button>' +
+      '</div>';
+
+    var root = showModal(html, { title: '发言' });
+    var input = root.querySelector('#chat-input');
+    var send = function (text) {
+      text = String(text || '').trim();
+      if (!text) return;
+      closeModal();
+      sendChat(text);
+    };
+
+    var btns = root.querySelectorAll('.chat-q');
+    for (var k = 0; k < btns.length; k++) {
+      (function (btn) {
+        btn.addEventListener('click', function () { send(btn.getAttribute('data-t')); });
+      })(btns[k]);
+    }
+    var sendBtn = root.querySelector('#chat-send');
+    if (sendBtn) sendBtn.addEventListener('click', function () { send(input.value); });
+    if (input) {
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); send(input.value); }
+      });
+      setTimeout(function () { try { input.focus(); } catch (e) { /* ignore */ } }, 80);
+    }
+  }
+
+  function sendChat(text) {
+    if (!session) return;
+    api('/api/chat', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      text: text
+    }).then(function (res) {
+      if (!res || !res.ok) toast((res && res.error) || '发送失败', 'err');
+    });
+  }
+
+  /* ------------------------------------------------------- 轮到你了提醒 */
+
+  var soundOn = (function () {
+    try { return lsGet('zjh.sound', '1') === '1'; } catch (e) { return true; }
+  })();
+  var audioCtx = null;
+  var titleFlash = null;
+  var lastTurnAlertPid = null;
+
+  function primeAudio() {
+    // 浏览器自动播放策略：需要在用户手势里初始化 AudioContext
+    if (audioCtx) return;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    } catch (e) { audioCtx = null; }
+  }
+
+  function beep() {
+    if (!soundOn) return;
+    primeAudio();
+    if (!audioCtx) return;
+    try {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.28);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    } catch (e) { /* ignore */ }
+  }
+
+  function startTitleFlash() {
+    if (titleFlash) return;
+    var baseTitle = document.title;
+    var on = false;
+    titleFlash = setInterval(function () {
+      on = !on;
+      document.title = on ? '【轮到你了】' : baseTitle;
+    }, 800);
+  }
+
+  function stopTitleFlash() {
+    if (titleFlash) {
+      clearInterval(titleFlash);
+      titleFlash = null;
+      document.title = document.title.replace(/^【轮到你了】/, '') || document.title;
+    }
+  }
+
+  function handleTurnAlert(st) {
+    var mid = meId();
+    var myTurn = !!(st.phase === 'playing' && st.turnId && st.turnId === mid);
+    if (myTurn && lastTurnAlertPid !== st.turnId) {
+      lastTurnAlertPid = st.turnId;
+      beep();
+      try { if (navigator.vibrate) navigator.vibrate([80, 60, 80]); } catch (e) { /* ignore */ }
+      startTitleFlash();
+    } else if (!myTurn && lastTurnAlertPid) {
+      lastTurnAlertPid = null;
+      stopTitleFlash();
+    }
+    if (st.phase !== 'playing') stopTitleFlash();
+  }
+
+  function updateSoundBtn() {
+    var b = $('btn-sound');
+    if (b) b.textContent = soundOn ? '🔊' : '🔇';
+  }
+
   function render(st) {
     var phaseChanged = st.phase !== lastPhase;
     lastPhase = st.phase;
@@ -852,6 +1015,8 @@
     renderMyArea(st);
     renderLogs(st);
     renderBottom(st);
+    handleChat(st);
+    handleTurnAlert(st);
     tick();
 
     if (phaseChanged) {
@@ -906,10 +1071,13 @@
       list.push({ cls: 'waiting', text: '等待中' });
     } else if (st.phase === 'showdown') {
       if (p.folded) list.push({ cls: 'folded', text: '已弃牌' });
+      else if (p.allIn) list.push({ cls: 'allin', text: '全下' });
       else if (p.inHand) list.push({ cls: 'show', text: '开牌' });
       else list.push({ cls: 'waiting', text: '等待中' });
     } else if (p.folded) {
       list.push({ cls: 'folded', text: '已弃牌' });
+    } else if (p.allIn) {
+      list.push({ cls: 'allin', text: '全下' });
     } else if (!p.inHand) {
       list.push({ cls: 'waiting', text: '等待中' });
     } else if (p.seen) {
@@ -948,6 +1116,7 @@
       if (p.id === mid) cls += ' me';
       if (p.isTurn) { cls += ' turn'; turnSeatEl = seat; }
       if (p.folded) cls += ' folded';
+      if (p.allIn) cls += ' allin';
       if (!p.connected) cls += ' offline';
       if (st.phase === 'playing' && !p.inHand) cls += ' idle';
       seat.className = cls;
@@ -1386,6 +1555,7 @@
         rows.push({
           name: entry.name,
           hand: entry.hand,
+          allIn: !!entry.allIn,
           cards: entry.cards || [],
           win: isWin
         });
@@ -1406,6 +1576,7 @@
         var row = rows[q];
         html += '<div class="reveal-row' + (row.win ? ' winner' : '') + '">';
         html += '<div class="reveal-name">' + esc(row.name) +
+          (row.allIn ? '<i class="allin-tag">全下</i>' : '') +
           (row.win ? '<i class="win-tag">赢</i>' : '') + '</div>';
         html += '<div class="reveal-cards">';
         for (var c = 0; c < row.cards.length; c++) html += miniCardHtml(row.cards[c]);
@@ -1423,18 +1594,22 @@
         (rows.length ? '，仅显示已亮出的手牌。' : '。') + '</p>';
     }
 
-    // 累计积分榜
+    // 累计积分榜（含战绩：局数/胜局/最大赢池）
     var sorted = players.slice().sort(function (a, b) { return (b.net || 0) - (a.net || 0); });
     html += '<div class="sec-title">累计积分榜</div>';
-    html += '<table class="rank-table"><tbody>';
+    html += '<table class="rank-table"><thead><tr>' +
+      '<th></th><th>玩家</th><th>净分</th><th>战绩</th><th>筹码</th></tr></thead><tbody>';
     for (var k = 0; k < sorted.length; k++) {
       var sp = sorted[k];
       var netCls = sp.net > 0 ? 'pos' : (sp.net < 0 ? 'neg' : 'zero');
+      var stt = sp.stats || { hands: 0, wins: 0, best: 0 };
+      var sttText = stt.hands + '局/' + stt.wins + '胜' + (stt.best > 0 ? '·赢' + stt.best : '');
       html += '<tr' + (sp.id === meId() ? ' class="mine"' : '') + '>';
       html += '<td class="rank-no">' + (k + 1) + '</td>';
       html += '<td class="rank-name">' + esc(sp.name) +
         (sp.id === meId() ? '<i class="me-tag">我</i>' : '') + '</td>';
       html += '<td class="rank-net ' + netCls + '">' + esc(fmtSigned(sp.net)) + '</td>';
+      html += '<td class="rank-stats">' + esc(sttText) + '</td>';
       html += '<td class="rank-chips">' + esc(sp.chips) + '</td>';
       html += '</tr>';
     }
@@ -1580,6 +1755,7 @@
     var raiseOpt = null;
     var compareOpt = null;
     var foldOpt = null;
+    var allinOpt = null;
     for (var i = 0; i < opts.length; i++) {
       var o = opts[i];
       if (!o) continue;
@@ -1587,6 +1763,7 @@
       else if (o.type === 'raise') raiseOpt = o;
       else if (o.type === 'compare') compareOpt = o;
       else if (o.type === 'fold') foldOpt = o;
+      else if (o.type === 'allin') allinOpt = o;
     }
 
     var canLook = !!st.canLook;
@@ -1599,6 +1776,12 @@
     updateAct($('act-call'), busy || !callOpt,
       callOpt ? ('跟注 ' + callOpt.cost) : '跟注',
       callOpt ? '下注' : '不可用');
+
+    var allinBtn = $('act-allin');
+    if (allinBtn) allinBtn.hidden = !allinOpt;
+    updateAct(allinBtn, busy || !allinOpt,
+      allinOpt ? '孤注一掷 ' + allinOpt.cost : '孤注一掷',
+      allinOpt ? '全下留场开牌' : '不可用');
 
     var raiseSub = '不可用';
     if (raiseOpt && raiseOpt.raises && raiseOpt.raises.length) {
@@ -1779,6 +1962,18 @@
   function doCall() {
     if (!optionOf('call')) { toast('现在不能跟注', 'err'); return; }
     postAction('call', {});
+  }
+
+  function doAllin() {
+    var opt = optionOf('allin');
+    if (!opt) { toast('现在不能孤注一掷', 'err'); return; }
+    confirmDialog({
+      title: '孤注一掷',
+      message: '把剩下的 ' + opt.cost + ' 筹码全部押上，留在牌局里直到开牌。确定吗？',
+      okText: '全下'
+    }).then(function (ok) {
+      if (ok) postAction('allin', {});
+    });
   }
 
   function doRaise() {
@@ -1971,6 +2166,15 @@
     $('btn-bottom').addEventListener('click', doStart);
     $('btn-save-config').addEventListener('click', saveConfig);
     $('btn-add-bot').addEventListener('click', doAddBot);
+    $('btn-chat').addEventListener('click', openChatDialog);
+    $('btn-sound').addEventListener('click', function () {
+      soundOn = !soundOn;
+      try { lsSet('zjh.sound', soundOn ? '1' : '0'); } catch (e) { /* ignore */ }
+      updateSoundBtn();
+      toast(soundOn ? '提醒已开：轮到你会响铃/震动' : '提醒已关', 'ok');
+      if (soundOn) { primeAudio(); beep(); }
+    });
+    updateSoundBtn();
 
     $('act-look').addEventListener('click', function () {
       if ($('act-look').disabled) return;
@@ -1987,6 +2191,11 @@
     $('act-compare').addEventListener('click', function () {
       if ($('act-compare').disabled) return;
       doCompare();
+    });
+    $('act-allin').addEventListener('click', function () {
+      var b = $('act-allin');
+      if (b.hidden || b.disabled) return;
+      doAllin();
     });
     $('act-fold').addEventListener('click', function () {
       if ($('act-fold').disabled) return;

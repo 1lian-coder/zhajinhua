@@ -58,7 +58,16 @@ SSE 长连接。事件类型：
 | `call` | `{}` | 跟注，扣 `cost` |
 | `raise` | `{ "to": 40 }` | 加注到单注 `to`（必须 > 当前 stake 且 ≤ maxStake） |
 | `fold` | `{}` | 弃牌 |
+| `allin` | `{}` | 孤注一掷：筹码不够跟注时押上全部，留在牌局直到开牌（`myOptions` 会给出 `cost`=剩余筹码） |
 | `compare` | `{ "target": "p2" }` | 约比牌，付 `cost`，输的人出局 |
+
+### POST /api/chat
+快捷聊天（大厅/牌局中都可发）。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"a1b2...", "text":"快点啦" }
+```
+`text` 服务端清洗（去控制字符、trim、截 30 字）；每玩家 3 秒内最多 2 条。
+响应 `{ok:true}`，内容通过 state 的 `chat` 数组下发（最近 12 条，每条带递增 `seq`，前端靠 seq 判断新消息）。
 
 ### POST /api/addBot
 房主添加人机玩家（仅 lobby / showdown 阶段）。人机由服务端 `botTick` 驱动自动出牌。
@@ -121,6 +130,8 @@ SSE 长连接。事件类型：
       "seen": true,                    // 是否已看牌（公开信息）
       "connected": true,               // 是否在线（人机恒为 true）
       "isBot": false,                 // 是否人机玩家
+      "allIn": false,                 // 本局是否孤注一掷（全下留场，不再参与轮转）
+      "stats": { "hands": 5, "wins": 2, "best": 360 },  // 本房间累计战绩（落盘保留）
       "isHost": true,
       "isDealer": false,
       "isTurn": false,

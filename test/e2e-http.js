@@ -299,6 +299,101 @@ async function main() {
   }
   console.log(`✓ ${sessions.length} 名玩家加入`);
 
+  // 1z) 快捷聊天：发送、下发、限频
+  {
+    const c1 = await post('/api/chat', { ...sessions[0], text: '  快点啦  ' });
+    if (!c1.ok) throw new Error('聊天发送失败: ' + c1.error);
+    const s = await getState(sessions[1]);
+    const last = (s.chat || [])[s.chat.length - 1];
+    if (!last || last.text !== '快点啦' || last.id !== sessions[0].playerId) {
+      throw new Error('聊天没下发: ' + JSON.stringify(last));
+    }
+    // 3 秒窗口内第 3 条被限频
+    const f1 = await post('/api/chat', { ...sessions[0], text: 'a' });
+    const f2 = await post('/api/chat', { ...sessions[0], text: 'b' });
+    if (f1.ok && f2.ok) throw new Error('聊天限频没生效');
+    console.log('✓ 快捷聊天可用（含限频）');
+    await sleep(3100);
+  }
+
+  // 1y) 孤注一掷：把一个玩家筹码压到跟不起，验证全下后直接开牌、账目零和
+  {
+    const cfg2 = await post('/api/config', {
+      roomId,
+      playerId: sessions[0].playerId,
+      token: sessions[0].token,
+      config: { ante: 10, initialChips: 40, baseStake: 10, maxStake: 100, maxPot: 99999, seeMultiplier: 2, turnSeconds: 0, autoRebuy: false }
+    });
+    if (!cfg2.ok) throw new Error('调小初始筹码失败: ' + cfg2.error);
+    await post('/api/start', { ...sessions[0] });
+
+    // 找到筹码不足跟注的人，直接让所有人轮到就弃牌，直到某个人 chips < callCost 时全下
+    let allinDone = false;
+    let g2 = 0;
+    while (!allinDone && g2++ < 200) {
+      const s = await getState(sessions[0]);
+      if (s.phase !== 'playing') break;
+      const turnSess = sessions.find((x) => x.playerId === s.turnId);
+      if (!turnSess) break;
+      const me = s.players.find((p) => p.id === s.turnId);
+      const opts = s.myOptions ? null : null;
+      const ts = await getState(turnSess);
+      const allinOpt = (ts.myOptions || []).find((o) => o.type === 'allin');
+      if (allinOpt) {
+        const r = await post('/api/action', { ...turnSess, action: 'allin', payload: {} });
+        if (!r.ok) throw new Error('全下失败: ' + r.error);
+        allinDone = true;
+        break;
+      }
+      const callOpt = (ts.myOptions || []).find((o) => o.type === 'call');
+      const r = await post('/api/action', {
+        ...turnSess,
+        action: callOpt ? 'call' : 'fold',
+        payload: {}
+      });
+      if (!r.ok) break; // 有人没筹码跟注又没到全下选项（不应发生）
+      void me; void opts;
+    }
+
+    const s2 = await getState(sessions[0]);
+    // 全下后：要么直接开牌（其余全下/弃牌），要么继续到别人行动；等它自然结束
+    let g3 = 0;
+    let phase = s2.phase;
+    while (phase === 'playing' && g3++ < 200) {
+      const s = await getState(sessions[0]);
+      phase = s.phase;
+      if (phase !== 'playing') break;
+      const turnSess = sessions.find((x) => x.playerId === s.turnId);
+      if (!turnSess) break;
+      const ts = await getState(turnSess);
+      const pick = (ts.myOptions || []).find((o) => o.type === 'call') ||
+                  (ts.myOptions || []).find((o) => o.type === 'allin') ||
+                  (ts.myOptions || []).find((o) => o.type === 'fold');
+      const r = await post('/api/action', { ...turnSess, action: pick.type, payload: {} });
+      if (!r.ok) break;
+    }
+
+    const fin = await getState(sessions[0]);
+    if (fin.phase !== 'showdown') throw new Error('全下场景没走到结算: ' + fin.phase);
+    const netSum2 = fin.players.reduce((a, p) => a + p.net, 0);
+    if (netSum2 !== 0) throw new Error('全下结算后账目不零和: ' + netSum2);
+    for (const p of fin.players) {
+      if (p.chips < 0) throw new Error(p.name + ' 筹码为负: ' + p.chips);
+    }
+    // 战绩应已累计
+    for (const p of fin.players) {
+      if (!p.stats || !p.stats.hands) throw new Error(p.name + ' 没有战绩统计');
+    }
+    console.log('✓ 孤注一掷整局跑通（零和、无负筹码），战绩已累计');
+
+    // 恢复主流程配置（大筹码 + 自动补筹）
+    await post('/api/config', {
+      ...sessions[0],
+      config: { ante: 10, initialChips: 5000, baseStake: 10, maxStake: 100, maxPot: 99999, seeMultiplier: 2, turnSeconds: 0, autoRebuy: true }
+    });
+  }
+
+
   // 2) 房间信息 & 身份校验
   const info = await get(`/api/roomInfo?roomId=${roomId}`);
   if (!info.exists || info.players !== 4) throw new Error('房间信息错误: ' + JSON.stringify(info));
