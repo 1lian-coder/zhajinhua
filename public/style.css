@@ -3045,3 +3045,67 @@ input {
   font-size: 10.5px;
   color: var(--muted);
 }
+/* 相册头像预览 */
+.avatar-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.avatar-preview {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  background: rgba(20, 40, 32, .9);
+  border: 1px solid rgba(140, 210, 175, .5);
+  background-size: cover;
+  background-position: center;
+  flex: 0 0 auto;
+}
+
+/* 相册头像在头像圈上显示为图片 */
+.avatar-face { background-size: cover; background-position: center; }
+/* ==================== 参与/观战切换 & 本局输赢列 ==================== */
+
+.sitout-btn {
+  position: absolute;
+  right: 58px;
+  bottom: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  color: #cfe4ff;
+  background: rgba(80, 140, 255, .16);
+  border: 1px solid rgba(120, 170, 255, .45);
+  z-index: 8;
+}
+
+.sitout-btn:active { transform: scale(.95); }
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.check-row input {
+  margin-top: 2px;
+  accent-color: #2f9d74;
+}
+
+.rank-delta { font-weight: 600; }
+.rank-delta.pos { color: #7fe0b0; }
+.rank-delta.neg { color: #ff8f7d; }
+.rank-delta.zero { color: var(--muted); }
+
+.round-table { margin-top: 4px; }

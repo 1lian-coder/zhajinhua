@@ -65,6 +65,10 @@
           <input id="create-pin" class="input" type="tel" inputmode="numeric" maxlength="8" placeholder="输入口令" autocomplete="off">
         </label>
         <button id="btn-create" class="btn btn-primary btn-big" type="button">创建房间</button>
+        <label class="check-row" id="create-sitout-row">
+          <input id="create-sitout" type="checkbox">
+          <span>创建后先观战（本局不参与，可在房间内随时切回）</span>
+        </label>
       </div>
 
       <div class="box" id="join-box">
@@ -74,7 +78,8 @@
         </div>
         <div class="join-row">
           <input id="join-room" class="input input-room" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="837261" autocomplete="off" enterkeyhint="go" aria-label="6 位房号">
-          <button id="btn-join" class="btn btn-primary" type="button">加入</button>
+          <button id="btn-join" class="btn btn-primary" type="button">参与</button>
+          <button id="btn-watch-join" class="btn btn-ghost" type="button">观战</button>
         </div>
         <label class="field" id="join-pin-field" hidden>
           <span class="field-label">房间密码</span>
@@ -223,6 +228,7 @@
         </div>
 
         <button id="btn-chat" class="chat-round" type="button" title="聊天">💬</button>
+        <button id="btn-sitout" class="sitout-btn" type="button" title="切换本局参与/观战" hidden>观战</button>
       </div>
 
       <!-- 大厅：人机玩家管理 -->

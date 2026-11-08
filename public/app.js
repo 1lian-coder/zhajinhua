@@ -422,56 +422,155 @@ var AVATARS = [
 
   /* ---------------------------------------------------------------- 首页 */
 
+  function isImageAvatar(a) {
+    return /^data:image\/(png|jpeg|webp);base64,/.test(String(a || ''));
+  }
+
   function readAvatar() {
     var a = lsGet(AVATAR_KEY, '');
+    if (isImageAvatar(a) && a.length <= 26000) return a;
     return AVATARS.indexOf(a) >= 0 ? a : '';
+  }
+
+  /** 把头像画到某个元素上：表情用文字，相册图用背景图 */
+  function paintAvatar(el, avatar, name, id) {
+    if (!el) return;
+    if (isImageAvatar(avatar)) {
+      el.textContent = '';
+      el.style.backgroundImage = 'url("' + avatar + '")';
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+    } else {
+      el.textContent = avatar || initialOf(name);
+      el.style.backgroundImage = '';
+      el.style.background = avatarBg(name || '', id || '');
+    }
   }
 
   function applyAvatarBtn() {
     var btn = $('btn-avatar');
     if (!btn) return;
     var a = readAvatar();
-    if (a) {
+    if (isImageAvatar(a)) {
+      btn.textContent = '';
+      btn.style.backgroundImage = 'url("' + a + '")';
+      btn.style.backgroundSize = 'cover';
+      btn.style.backgroundPosition = 'center';
+      btn.classList.add('has');
+    } else if (a) {
       btn.textContent = a;
+      btn.style.backgroundImage = '';
       btn.classList.add('has');
     } else {
       btn.textContent = '👤';
+      btn.style.backgroundImage = '';
       btn.classList.remove('has');
     }
   }
 
-  /** 头像选择器：选了就存本地，下次进房带上 */
+  /** 相册图：压缩成 128×128 JPEG（必要时再降一档），控制在 ~16KB 内 */
+  function compressAvatarFile(file, cb) {
+    if (!file || !/^image\//.test(file.type)) {
+      toast('请选择图片文件', 'err');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var tries = [{ size: 128, q: 0.72 }, { size: 96, q: 0.6 }, { size: 80, q: 0.5 }];
+        var i = 0;
+        (function next() {
+          var t = tries[i++];
+          var canvas = document.createElement('canvas');
+          canvas.width = t.size;
+          canvas.height = t.size;
+          var ctx = canvas.getContext('2d');
+          // cover 裁剪居中
+          var s = Math.min(img.width, img.height);
+          var sx = (img.width - s) / 2;
+          var sy = (img.height - s) / 2;
+          ctx.drawImage(img, sx, sy, s, s, 0, 0, t.size, t.size);
+          var url = canvas.toDataURL('image/jpeg', t.q);
+          if (url.length <= 24000 || i >= tries.length) {
+            cb(url);
+          } else {
+            next();
+          }
+        })();
+      };
+      img.onerror = function () { toast('这张图片读不了，换一张试试', 'err'); };
+      img.src = String(reader.result || '');
+    };
+    reader.onerror = function () { toast('读取图片失败', 'err'); };
+    reader.readAsDataURL(file);
+  }
+
+  /** 头像选择器：表情 + 从手机相册选图 */
   function openAvatarPicker(onPick) {
-    var html = '<p class="tips">选一个头像（房间里的朋友都能看到）</p><div class="avatar-grid">';
+    var html = '<div class="avatar-preview-row">' +
+      '<span class="avatar-preview" id="avatar-preview"></span>' +
+      '<button type="button" class="btn btn-primary btn-small" id="btn-avatar-file">📷 从手机相册选图</button>' +
+      '</div>' +
+      '<div class="avatar-grid">';
     for (var i = 0; i < AVATARS.length; i++) {
       html += '<button type="button" class="avatar-opt" data-av="' + AVATARS[i] + '">' + AVATARS[i] + '</button>';
     }
-    html += '</div><div class="modal-btns">' +
+    html += '</div><input type="file" id="avatar-file-input" accept="image/*" hidden>' +
+      '<div class="modal-btns">' +
       '<button type="button" class="btn btn-ghost" data-reset="1">用名字首字</button>' +
       '<button type="button" class="btn btn-ghost" data-close="1">取消</button></div>';
     var root = showModal(html, { title: '选择头像' });
+
+    var preview = root.querySelector('#avatar-preview');
+    var paintPreview = function (av) {
+      if (!preview) return;
+      if (isImageAvatar(av)) {
+        preview.textContent = '';
+        preview.style.backgroundImage = 'url("' + av + '")';
+        preview.style.backgroundSize = 'cover';
+        preview.style.backgroundPosition = 'center';
+      } else {
+        preview.style.backgroundImage = '';
+        preview.textContent = av || '👤';
+      }
+    };
+    paintPreview(readAvatar());
+
+    var pick = function (av) {
+      lsSet(AVATAR_KEY, av);
+      applyAvatarBtn();
+      closeModal();
+      if (onPick) onPick(av);
+      else toast(av ? '头像已选择' : '已改回名字首字头像', 'ok');
+    };
+
     var opts = root.querySelectorAll('.avatar-opt');
     for (var k = 0; k < opts.length; k++) {
       (function (btn) {
-        btn.addEventListener('click', function () {
-          var av = btn.getAttribute('data-av');
-          lsSet(AVATAR_KEY, av);
-          applyAvatarBtn();
-          closeModal();
-          if (onPick) onPick(av);
-          else toast('头像已选择：' + av, 'ok');
-        });
+        btn.addEventListener('click', function () { pick(btn.getAttribute('data-av')); });
       })(opts[k]);
     }
+
+    var fileBtn = root.querySelector('#btn-avatar-file');
+    var fileInput = root.querySelector('#avatar-file-input');
+    if (fileBtn && fileInput) {
+      fileBtn.addEventListener('click', function () {
+        try { fileInput.click(); } catch (e) { /* ignore */ }
+      });
+      fileInput.addEventListener('change', function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        compressAvatarFile(f, function (url) {
+          paintPreview(url);
+          pick(url);
+        });
+      });
+    }
+
     var reset = root.querySelector('[data-reset]');
     if (reset) {
-      reset.addEventListener('click', function () {
-        lsSet(AVATAR_KEY, '');
-        applyAvatarBtn();
-        closeModal();
-        if (onPick) onPick('');
-        else toast('已改回名字首字头像', 'ok');
-      });
+      reset.addEventListener('click', function () { pick(''); });
     }
   }
 
@@ -719,7 +818,8 @@ var AVATARS = [
     busy = true;
     var btn = $('btn-create');
     btn.disabled = true;
-    api('/api/create', { name: name, config: cfg, pin: pin, avatar: readAvatar() }).then(function (res) {
+    var sitOut = !!($('create-sitout') && $('create-sitout').checked);
+    api('/api/create', { name: name, config: cfg, pin: pin, avatar: readAvatar(), sitOut: sitOut }).then(function (res) {
       busy = false;
       btn.disabled = false;
       if (!res || !res.ok) {
@@ -1983,6 +2083,8 @@ var AVATARS = [
       var oi = order.indexOf(p.id);
       if (oi >= 0) list.push({ cls: 'ord', text: String(oi + 1) });
     }
+    // 选择本局观战（不参与）的玩家
+    if (p.sitOut) list.push({ cls: 'sitout', text: '观战' });
 
     // 抢庄阶段：先显示每个人实时选择（抢xN 蓝色 / 不抢 灰色 / 待选）
     if (st.phase === 'bidding') {
@@ -2065,8 +2167,7 @@ var AVATARS = [
       av.appendChild(ring);
       var face = document.createElement('span');
       face.className = 'avatar-face';
-      face.textContent = p.avatar || initialOf(p.name);
-      face.style.background = avatarBg(p.name, p.id);
+      paintAvatar(face, p.avatar, p.name, p.id);
       av.appendChild(face);
       var sec = document.createElement('i');
       sec.className = 'seat-sec';
@@ -2142,8 +2243,7 @@ var AVATARS = [
     // 我的座位信息（始终显示；大厅也显示，方便看自己筹码）
     if (me) {
       $('my-name').textContent = me.name || '我';
-      $('my-avatar-face').textContent = st.myAvatar || initialOf(me.name);
-      $('my-avatar-face').style.background = avatarBg(me.name, me.id);
+      paintAvatar($('my-avatar-face'), st.myAvatar, me.name, me.id);
       $('my-chips').textContent = fmtChips(me.chips);
       $('my-bet').textContent = fmtChips(me.bet || 0);
       var myNet = $('my-net');
@@ -2660,24 +2760,50 @@ var AVATARS = [
 
     // 累计积分榜（含战绩：局数/胜局/最大赢池）
     var sorted = players.slice().sort(function (a, b) { return (b.net || 0) - (a.net || 0); });
+    var deltaById = {};
+    var dl = r.deltas || [];
+    for (var di = 0; di < dl.length; di++) deltaById[dl[di].id] = dl[di].delta;
     html += '<div class="sec-title">累计积分榜</div>';
     html += '<table class="rank-table"><thead><tr>' +
-      '<th></th><th>玩家</th><th>净分</th><th>战绩</th><th>筹码</th></tr></thead><tbody>';
+      '<th></th><th>玩家</th><th>净分</th><th>本局</th><th>战绩</th><th>筹码</th></tr></thead><tbody>';
     for (var k = 0; k < sorted.length; k++) {
       var sp = sorted[k];
       var netCls = sp.net > 0 ? 'pos' : (sp.net < 0 ? 'neg' : 'zero');
       var stt = sp.stats || { hands: 0, wins: 0, best: 0 };
       var sttText = stt.hands + '局/' + stt.wins + '胜' + (stt.best > 0 ? '·赢' + stt.best : '');
+      var dlt = deltaById[sp.id] != null ? deltaById[sp.id] : null;
+      var dltCls = dlt > 0 ? 'pos' : (dlt < 0 ? 'neg' : 'zero');
       html += '<tr' + (sp.id === meId() ? ' class="mine"' : '') + '>';
       html += '<td class="rank-no">' + (k + 1) + '</td>';
       html += '<td class="rank-name">' + esc(sp.name) +
         (sp.id === meId() ? '<i class="me-tag">我</i>' : '') + '</td>';
       html += '<td class="rank-net ' + netCls + '">' + esc(fmtSigned(sp.net)) + '</td>';
+      html += '<td class="rank-delta ' + dltCls + '">' + (dlt == null ? '—' : esc(fmtSigned(dlt))) + '</td>';
       html += '<td class="rank-stats">' + esc(sttText) + '</td>';
       html += '<td class="rank-chips">' + esc(sp.chips) + '</td>';
       html += '</tr>';
     }
     html += '</tbody></table>';
+
+    // 每一轮（设置了几局一轮）打完后的输赢总结
+    var rs = r.roundSummary;
+    if (rs && rs.length) {
+      html += '<div class="sec-title">本轮输赢总结</div>';
+      html += '<table class="rank-table round-table"><thead><tr>' +
+        '<th></th><th>玩家</th><th>本轮输赢</th><th>净分</th><th>筹码</th></tr></thead><tbody>';
+      for (var ri = 0; ri < rs.length; ri++) {
+        var rp = rs[ri];
+        var rCls = rp.delta > 0 ? 'pos' : (rp.delta < 0 ? 'neg' : 'zero');
+        html += '<tr' + (rp.id === meId() ? ' class="mine"' : '') + '>';
+        html += '<td class="rank-no">' + (ri + 1) + '</td>';
+        html += '<td class="rank-name">' + esc(rp.name) + (rp.id === meId() ? '<i class="me-tag">我</i>' : '') + '</td>';
+        html += '<td class="rank-net ' + rCls + '">' + esc(fmtSigned(rp.delta)) + '</td>';
+        html += '<td class="rank-net ' + (rp.net > 0 ? 'pos' : (rp.net < 0 ? 'neg' : 'zero')) + '">' + esc(fmtSigned(rp.net)) + '</td>';
+        html += '<td class="rank-chips">' + esc(rp.chips) + '</td>';
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+    }
 
     // 惩罚换算
     html += '<div class="penalty">';
@@ -3048,6 +3174,15 @@ var AVATARS = [
     var actions = $('action-btns');
     var primary = $('btn-bottom');
     var bidBar = $('bid-bar');
+
+    // 本局参与 / 观战切换（只能在局间操作）
+    var sitBtn = $('btn-sitout');
+    if (sitBtn) {
+      var canSwitch = !st.spectating && (st.phase === 'lobby' || st.phase === 'showdown');
+      sitBtn.hidden = !canSwitch;
+      sitBtn.textContent = st.mySitOut ? '参与' : '观战';
+      sitBtn.title = st.mySitOut ? '点击重新参与游戏' : '点击本局观战（不参与）';
+    }
 
     // 观战者没有任何操作权
     if (st.spectating) {
@@ -3445,6 +3580,26 @@ var AVATARS = [
     $('btn-adv').addEventListener('click', toggleAdvanced);
     $('btn-create').addEventListener('click', doCreate);
     $('btn-join').addEventListener('click', doJoin);
+    $('btn-watch-join').addEventListener('click', function () {
+      var rid = digits($('join-room').value).slice(0, 6);
+      if (!rid || rid.length !== 6) { toast('请输入 6 位数字房号', 'err'); return; }
+      doWatch(rid);
+    });
+    $('btn-sitout').addEventListener('click', function () {
+      if (!session || !state || busy) return;
+      var btn = $('btn-sitout');
+      btn.disabled = true;
+      api('/api/sitOut', {
+        roomId: session.roomId,
+        playerId: session.playerId,
+        token: session.token,
+        sitOut: !state.mySitOut
+      }).then(function (res) {
+        btn.disabled = false;
+        if (!res || !res.ok) toast((res && res.error) || '切换失败', 'err');
+        else toast(res.sitOut ? '已切换为观战：本局不参与' : '已重新参与游戏', 'ok');
+      });
+    });
     $('btn-refresh-rooms').addEventListener('click', loadRoomList);
     $('btn-resume').addEventListener('click', doResume);
     $('btn-avatar').addEventListener('click', function () { openAvatarPicker(); });

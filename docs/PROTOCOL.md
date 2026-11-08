@@ -294,3 +294,17 @@ event: closed
 data: {"reason":"人都退出了"}
 ```
 前端收到后自动退回首页。
+
+### POST /api/sitOut
+切换本局参与 / 观战（只能在局间：lobby/showdown）。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"…", "sitOut": true }
+```
+返回 `{ ok:true, sitOut }`。观战状态的玩家不参与本局，也不在出牌顺序里；`players[].sitOut` / `mySitOut` 可见。
+
+### 昵称唯一
+同房间内昵称重复时 `addPlayer` 抛出「昵称…已经有人用了」，join/create 返回 ok=false。房间记录用过的昵称 `usedNames`。
+
+### 输赢数据
+- `lastResult.deltas`：本局每人输赢 `[{id,name,delta}]`（零和）
+- `lastResult.roundSummary`：每轮局数打满时的本轮总结 `[{id,name,delta,chips,net}]`（零和）

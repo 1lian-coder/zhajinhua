@@ -404,7 +404,7 @@ const api = {
     const name = body.name;
     const id = genRoomId();
     const room = new Room(id, body.config);
-    const player = room.addPlayer(name, { avatar: body.avatar });
+    const player = room.addPlayer(name, { avatar: body.avatar, sitOut: !!body.sitOut });
     rooms.set(id, room);
     room.log(`房间 ${id} 已创建`);
     markDirty();
@@ -461,6 +461,15 @@ const api = {
       broadcast(room);
     }
     return { ok: true };
+  },
+
+  /** 本局参与 / 观战切换（局间有效） */
+  async sitOut(body) {
+    const { room, player } = authPlayer(body);
+    const val = room.setSitOut(player.id, !!body.sitOut);
+    markDirty();
+    broadcast(room);
+    return { ok: true, sitOut: val };
   },
 
   /** 设置头像（表情，服务端白名单校验） */

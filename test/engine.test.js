@@ -1417,3 +1417,100 @@ test('顺金奖励：开出顺金时按配置给喜钱；配置为 0 时没有�
   assert.strictEqual(room2.phase, 'showdown');
   assert.strictEqual((room2.lastResult.bonuses || []).length, 0, '配置为 0 不该有喜钱');
 });
+
+test('头像：支持相册图片（小尺寸 base64），拒绝 SVG/超大/非法内容', () => {
+  const room = newRoom(2, QUIET);
+  const [a] = room.order;
+  const png = 'data:image/png;base64,' + 'A'.repeat(400);
+
+  room.setAvatar(a, png);
+  assert.strictEqual(room.players.get(a).avatar, png, '小图 data URL 可以设为头像');
+  assert.strictEqual(room.serialize(a).myAvatar, png);
+
+  assert.throws(() => room.setAvatar(a, 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='), /头像不在可选范围/, 'SVG 不安全，必须拒绝');
+  assert.throws(() => room.setAvatar(a, 'data:image/png;base64,' + 'A'.repeat(30000)), /头像不在可选范围/, '超大图片必须拒绝');
+  assert.throws(() => room.setAvatar(a, 'data:image/png;base64,'), /头像不在可选范围/, '空内容必须拒绝');
+
+  // 落盘保留
+  const restored = Room.fromJSON(JSON.parse(JSON.stringify(room.toJSON())));
+  assert.strictEqual(restored.players.get(a).avatar, png);
+});
+
+test('昵称唯一：同房间重名被拒，并记录用过的昵称', () => {
+  const room = newRoom(2, QUIET);
+  const [a] = room.order;
+  assert.throws(() => room.addPlayer('P1'), /已经有人用了/, '重名必须被拒绝');
+  assert.throws(() => room.addPlayer('P2'), /已经有人用了/);
+  assert.ok(room.usedNames.includes('P1') && room.usedNames.includes('P2'), '用过的昵称要有记录');
+  // 人机名字自动避开重名
+  const bots = [room.addBot(), room.addBot(), room.addBot()];
+  const names = bots.map((b) => b.name);
+  assert.strictEqual(new Set(names).size, names.length, '人机名字不重复');
+  for (const n of names) assert.notStrictEqual(room.players.get(a).name, n, '人机不能和玩家重名');
+});
+
+test('参与/观战：观战玩家不参与本局，可在局间切回；进行中不能切换', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+
+  assert.strictEqual(room.setSitOut(c, true), true);
+  assert.strictEqual(room.serialize(c).mySitOut, true);
+  room.startHand(a);
+  assert.strictEqual(room.players.get(c).inHand, false, '观战玩家不参与本局');
+  assert.strictEqual(room.players.get(a).inHand, true);
+
+  // 进行中不能切换
+  assert.throws(() => room.setSitOut(a, true), /牌局进行中不能切换/);
+
+  // 打完一局后切回来（a 弃牌后只剩 b，直接结算）
+  room.turnId = a;
+  room.act(a, 'fold');
+  assert.strictEqual(room.phase, 'showdown');
+  room.setSitOut(c, false);
+  room.nextHand(a);
+  assert.strictEqual(room.players.get(c).inHand, true, '切回后参与下一局');
+
+  // 全部观战：无法开局（用新房间验证）
+  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0 });
+  for (const id of room2.order) room2.setSitOut(id, true);
+  assert.throws(() => room2.startHand(room2.order[0]), /参与本局的人数不足/);
+});
+
+test('每局输赢 + 每轮总结：deltas 零和，roundSummary 累计，再来一轮重新累计', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, sessionHands: 2 });
+  const [a, b] = room.order;
+
+  const playOne = () => {
+    room.startHand(a);
+    forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+    forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+    room.turnId = a;
+    room.act(a, 'compare', { target: b });
+  };
+
+  playOne();
+  const r1 = room.lastResult;
+  assert.ok(r1.deltas && r1.deltas.length === 2, '每人都有本局输赢');
+  assert.strictEqual(r1.deltas.reduce((s, d) => s + d.delta, 0), 0, '本局输赢零和');
+  assert.strictEqual(r1.sessionOver, undefined);
+
+  playOne();
+  const r2 = room.lastResult;
+  assert.strictEqual(r2.sessionOver, true);
+  assert.ok(r2.roundSummary && r2.roundSummary.length === 2, '本轮总结包含所有人');
+  const roundSum = r2.roundSummary.reduce((s, x) => s + x.delta, 0);
+  assert.strictEqual(roundSum, 0, '本轮总结零和');
+  // 本轮总结 = 两局净分变化之和
+  const netA = room.players.get(a).net;
+  assert.strictEqual(r2.roundSummary.find((x) => x.id === a).delta, netA, '本轮总结与净分一致');
+
+  // 再来一轮：总结重新累计
+  room.nextHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+  const r3 = room.lastResult;
+  assert.strictEqual(r3.sessionOver, undefined, '新一轮还没打满');
+  assert.ok(r3.deltas, '新一轮每局输赢照常');
+});
