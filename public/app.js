@@ -718,6 +718,9 @@ var AVATARS = [
     }
     setUrlRoom(rid);
     updateResumeBox();
+    // 每次回首页都按"我保存过的配置"重填建房表单（房间内保存过的规则也会带出来）
+    var advForm = $('create-adv');
+    if (advForm) buildConfigForm(advForm, loadCreateConfig(), false);
     startRoomListPolling();
     if (opts.toast) toast(opts.toast, opts.toastType || '');
     if (opts.focusJoin) {
@@ -3581,6 +3584,11 @@ var AVATARS = [
   function bindHome() {
     $('btn-adv').addEventListener('click', toggleAdvanced);
     $('btn-create').addEventListener('click', doCreate);
+    $('btn-save-create-config').addEventListener('click', function () {
+      var cfg = readFormConfig($('create-adv'));
+      lsSet(CREATE_KEY, JSON.stringify(cfg));
+      toast('已保存你的默认配置，下次开房自动带入', 'ok');
+    });
     $('btn-join').addEventListener('click', doJoin);
     $('btn-watch-join').addEventListener('click', function () {
       var rid = digits($('join-room').value).slice(0, 6);

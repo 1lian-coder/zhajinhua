@@ -3109,3 +3109,7 @@ input {
 .rank-delta.zero { color: var(--muted); }
 
 .round-table { margin-top: 4px; }
+.save-cfg-btn {
+  width: 100%;
+  margin-top: 8px;
+}
