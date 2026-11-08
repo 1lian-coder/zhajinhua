@@ -758,8 +758,10 @@ var AVATARS = [
     showConn('连接中…');
     connected = false;
     updateMusicBtn();
+    updateVoiceBtn();
     musicStart();
     openStream();
+    announceVoiceReady();
   }
 
   /** 观战模式：隐藏自己的操作区，显示观战横幅（由 renderMyArea 读取 state.spectating） */
@@ -1452,17 +1454,17 @@ var AVATARS = [
         pid = pidByName(st, m[1]);
         cls = 'pop-compare';
         label = '比牌';
-        say = m[1] + ' 比牌';
+        say = m[1] + ' 已比牌';
       } else if ((m = text.match(/^(.{1,12}?) 超时/))) {
         pid = pidByName(st, m[1]);
         cls = 'pop-timeout';
         label = '超时弃牌';
-        say = m[1] + ' 超时弃牌';
+        say = m[1] + ' 已超时弃牌';
       } else if ((m = text.match(/^(.{1,12}?) 弃牌/))) {
         pid = pidByName(st, m[1]);
         cls = 'pop-fold';
         label = '弃牌';
-        say = m[1] + ' 弃牌';
+        say = m[1] + ' 已弃牌';
       }
       if (pid && label) {
         popActionBubble(pid, cls, label);
@@ -1910,18 +1912,7 @@ var AVATARS = [
     var root = showModal(html, { title: '发言' });
     var voiceBtn = root.querySelector('#chat-voice-toggle');
     if (voiceBtn) {
-      voiceBtn.addEventListener('click', function () {
-        voiceOn = !voiceOn;
-        lsSet(VOICE_KEY, voiceOn ? '1' : '0');
-        voiceBtn.textContent = voiceOn ? '已开启' : '已关闭';
-        if (voiceOn) {
-          if (!voiceSupported()) { toast('这台设备的浏览器不支持语音朗读', 'err'); return; }
-          speakText('语音播报已开启', true);
-        } else {
-          try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
-          toast('语音播报已关闭', 'ok');
-        }
-      });
+      voiceBtn.addEventListener('click', function () { toggleVoice(); });
     }
     var input = root.querySelector('#chat-input');
     var send = function (text) {
@@ -2043,29 +2034,44 @@ var AVATARS = [
   var mTimer = null;
   var mNextTime = 0;
   var mStep = 0;
-  var M_TEMPO = 112;
+  var M_TEMPO = 120;
   var M_STEP_DUR = 60 / M_TEMPO / 4; // 十六分音符
-  var M_TOTAL = 64;                  // 4 小节 × 16 步
+  var M_TOTAL = 128;                 // 8 小节 × 16 步
   var M_KICK = null;
   var M_HAT = null;
 
-  // 和弦（每小节一个）：Am - F - C - G，五声音阶旋律
+  // 欢乐斗地主风格：8 小节欢快循环（C-G-Am-F-C-G-F-G），八分音符跳旋律
   var M_CHORDS = [
+    { bass: 48, pad: [60, 64, 67] }, // C
+    { bass: 43, pad: [59, 62, 67] }, // G
     { bass: 45, pad: [57, 60, 64] }, // Am
     { bass: 41, pad: [53, 57, 60] }, // F
-    { bass: 48, pad: [55, 60, 64] }, // C
-    { bass: 43, pad: [50, 55, 59] }  // G
+    { bass: 48, pad: [60, 64, 67] }, // C
+    { bass: 43, pad: [59, 62, 67] }, // G
+    { bass: 41, pad: [53, 57, 60] }, // F
+    { bass: 43, pad: [59, 62, 67] }  // G
   ];
-  var M_MELODY = [
-    // Am
-    69, null, 72, null, 76, null, 74, null, 72, null, 69, null, null, null, null, null,
-    // F
-    69, null, 72, null, 77, null, 76, null, 72, null, 69, null, null, null, null, null,
-    // C
-    72, null, 76, null, 79, null, 76, null, 74, null, 72, null, null, null, null, null,
-    // G
-    74, null, 71, null, 74, null, 79, null, 76, null, 74, null, null, null, null, null
+  // 8 句 × 8 个八分音符，够“欢乐斗地主”那种跳跃感
+  var M_PHRASES = [
+    [64, 67, 69, 67, 64, 62, 60, 62],
+    [62, 67, 71, 69, 67, 62, 59, 62],
+    [60, 64, 69, 67, 64, 60, 57, 60],
+    [57, 60, 65, 64, 60, 57, 53, 57],
+    [64, 67, 72, 71, 67, 64, 60, 55],
+    [62, 67, 71, 74, 71, 67, 62, 59],
+    [57, 60, 65, 69, 67, 65, 60, 57],
+    [59, 62, 67, 65, 62, 59, 55, 59]
   ];
+  var M_MELODY = (function () {
+    var out = [];
+    for (var p = 0; p < M_PHRASES.length; p++) {
+      for (var n = 0; n < 8; n++) {
+        out.push(M_PHRASES[p][n]);
+        out.push(null);
+      }
+    }
+    return out;
+  })();
 
   function mNoteFreq(midi) {
     return 440 * Math.pow(2, (midi - 69) / 12);
@@ -2172,27 +2178,44 @@ var AVATARS = [
   }
 
   /** 调度一步（16 分音符）：和弦垫底 + 拨弦旋律 + 轻打击 */
+  /** 军鼓：反拍“啪”一声，更有斗地主的律动 */
+  function mSnare(t) {
+    if (!M_HAT) return;
+    try {
+      var src = mCtx.createBufferSource();
+      src.buffer = M_HAT;
+      var bp = mCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1700;
+      var g = mCtx.createGain();
+      g.gain.setValueAtTime(0.12, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(mGain);
+      src.start(t);
+    } catch (e) { /* ignore */ }
+  }
+
   function mScheduleStep(step, t) {
-    var bar = Math.floor(step / 16) % 4;
+    var bar = Math.floor(step / 16) % 8;
     var inBar = step % 16;
     var chord = M_CHORDS[bar];
-    // 每拍底鼓（欢乐斗地主那种“咚 咚 咚咚”的节奏）
-    if (inBar % 4 === 0) {
-      mKick(t);
-    }
+    // 每拍底鼓
+    if (inBar % 4 === 0) mKick(t);
+    // 反拍军鼓
+    if (inBar === 4 || inBar === 12) mSnare(t);
     if (inBar === 0) {
       mPad(t, chord.pad);
-      mTone(t, chord.bass, 0.05, 1.2, 'sine');
+      mTone(t, chord.bass, 0.055, 1.0, 'sine');
     }
     if (inBar === 8) {
-      mTone(t, chord.bass - 12, 0.035, 0.8, 'sine');
+      mTone(t, chord.bass, 0.04, 0.6, 'sine');
     }
     // 八分音符沙锤
     if (inBar % 2 === 1) mHat(t);
-    // 反拍加个轻巧的“嗒”
-    if (inBar === 4 || inBar === 12) mHat(t);
     var note = M_MELODY[step];
-    if (note != null) mTone(t, note, 0.045, 0.35, 'triangle');
+    if (note != null) mTone(t, note, 0.06, 0.26, 'triangle');
   }
 
   function mScheduleLoop() {
@@ -2205,6 +2228,29 @@ var AVATARS = [
     }
   }
 
+  var mMusicLevel = 0.1;
+
+  /** 语音播报时把背景音乐压低一点（继续播放，不中断） */
+  function musicDuck(on) {
+    if (!mCtx || !mGain || !musicOn) return;
+    try {
+      var t = mCtx.currentTime;
+      mGain.gain.cancelScheduledValues(t);
+      mGain.gain.setValueAtTime(Math.max(0.0001, mGain.gain.value), t);
+      mGain.gain.linearRampToValueAtTime(on ? 0.035 : mMusicLevel, t + (on ? 0.15 : 0.6));
+    } catch (e) { /* ignore */ }
+  }
+
+  /** 首次用户手势后确保 BGM 起来（首页/牌桌都循环播放） */
+  function musicAutoStart() {
+    if (!musicOn) return;
+    if (!ensureMusicCtx()) return;
+    try {
+      if (mCtx.state === 'suspended') mCtx.resume();
+    } catch (e) { /* ignore */ }
+    if (!mTimer) musicStart();
+  }
+
   function musicStart() {
     if (!musicOn) return;
     if (!ensureMusicCtx()) return;
@@ -2213,7 +2259,7 @@ var AVATARS = [
       if (mGain) {
         mGain.gain.cancelScheduledValues(mCtx.currentTime);
         mGain.gain.setValueAtTime(Math.max(0.0001, mGain.gain.value), mCtx.currentTime);
-        mGain.gain.linearRampToValueAtTime(0.1, mCtx.currentTime + 1.4);
+        mGain.gain.linearRampToValueAtTime(mMusicLevel, mCtx.currentTime + 1.4);
       }
       if (!mTimer) {
         mNextTime = mCtx.currentTime + 0.08;
@@ -2385,7 +2431,9 @@ var AVATARS = [
       hasCtx: !!mCtx,
       ctxState: mCtx ? mCtx.state : 'none',
       scheduling: !!mTimer,
-      step: mStep
+      step: mStep,
+      gain: mGain ? Math.round(mGain.gain.value * 1000) / 1000 : 0,
+      ducking: !!(mGain && mGain.gain.value < 0.06)
     };
   };
 
@@ -2416,6 +2464,7 @@ var AVATARS = [
   var speechQueue = [];
   var speechSpeaking = false;
   var speechLog = [];
+  var voiceBlockedNotified = false;
 
   function speechDrain() {
     if (speechSpeaking || !speechQueue.length || !voiceSupported()) return;
@@ -2429,8 +2478,23 @@ var AVATARS = [
       u.volume = 0.95;
       if (!voiceZh) voiceZh = voicePick();
       if (voiceZh) u.voice = voiceZh;
-      u.onend = function () { speechSpeaking = false; setTimeout(speechDrain, 40); };
-      u.onerror = function () { speechSpeaking = false; setTimeout(speechDrain, 40); };
+      u.onend = function () {
+        speechSpeaking = false;
+        if (!speechQueue.length) musicDuck(false);
+        setTimeout(speechDrain, 40);
+      };
+      u.onerror = function (ev) {
+        speechSpeaking = false;
+        try {
+          if (ev && (ev.error === 'not-allowed' || ev.error === 'interrupted') && !voiceBlockedNotified) {
+            voiceBlockedNotified = true;
+            toast('浏览器拦截了语音：先点一下页面，再打开语音播报', 'err');
+          }
+        } catch (e2) { /* ignore */ }
+        if (!speechQueue.length) musicDuck(false);
+        setTimeout(speechDrain, 40);
+      };
+      musicDuck(true);
       window.speechSynthesis.speak(u);
       window.__zjhVoice = {
         on: voiceOn,
@@ -2488,6 +2552,53 @@ var AVATARS = [
       }
     }
     return speakQueued(t);
+  }
+
+  var voiceNoticeShown = false;
+
+  function updateVoiceBtn() {
+    var btn = document.getElementById('btn-voice');
+    if (!btn) return;
+    btn.textContent = voiceOn ? '🗣' : '🔇';
+    btn.title = voiceOn ? '语音播报：开（点一下关闭）' : '语音播报：关（点一下开启）';
+  }
+
+  function toggleVoice() {
+    voiceOn = !voiceOn;
+    lsSet(VOICE_KEY, voiceOn ? '1' : '0');
+    updateVoiceBtn();
+    var chatBtn = document.getElementById('chat-voice-toggle');
+    if (chatBtn) chatBtn.textContent = voiceOn ? '已开启' : '已关闭';
+    if (voiceOn) {
+      if (!voiceSupported()) {
+        toast('这台设备的浏览器不支持语音播报，可以试试点「在浏览器打开」', 'err');
+        return;
+      }
+      speakText('语音播报已开启', true);
+      toast('语音播报已开启', 'ok');
+    } else {
+      try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+      toast('语音播报已关闭', 'ok');
+    }
+  }
+
+  /** 进房时确认一次：播报能用就说一句，不能用就提示 */
+  function announceVoiceReady() {
+    if (voiceNoticeShown) return;
+    voiceNoticeShown = true;
+    setTimeout(function () {
+      if (!voiceOn) return;
+      if (!voiceSupported()) {
+        toast('当前浏览器不支持语音播报；想听播报请点右上角「在浏览器打开」', 'err');
+        return;
+      }
+      var voices = [];
+      try { voices = window.speechSynthesis.getVoices() || []; } catch (e) { /* ignore */ }
+      if (!voices.length) {
+        toast('正在加载系统语音…如果一直没声音，可能是手机没装中文语音包', 'err');
+      }
+      speakQueued('语音播报已开启');
+    }, 1200);
   }
 
   function speakChat(name, text, isMe) {
@@ -4367,6 +4478,8 @@ var AVATARS = [
       toast(soundOn ? '提醒已开：轮到你会响铃/震动' : '提醒已关', 'ok');
       if (soundOn) { primeAudio(); beep(); }
     });
+    $('btn-voice').addEventListener('click', toggleVoice);
+    updateVoiceBtn();
     updateSoundBtn();
 
     $('act-look').addEventListener('click', function () {
@@ -4448,6 +4561,23 @@ var AVATARS = [
         window.speechSynthesis.speak(u);
       } catch (e) { /* ignore */ }
     }, { passive: true });
+
+    // 触摸也解锁语音（iOS 微信/浏览器），并确保背景音乐开始播放
+    document.addEventListener('touchstart', function () {
+      musicAutoStart();
+      if (!voiceSupported()) return;
+      try {
+        window.speechSynthesis.resume();
+        if (!voicePrimed) {
+          voicePrimed = true;
+          var u = new window.SpeechSynthesisUtterance(' ');
+          u.volume = 0.01;
+          u.lang = 'zh-CN';
+          window.speechSynthesis.speak(u);
+        }
+      } catch (e) { /* ignore */ }
+    }, { passive: true });
+    document.addEventListener('click', function () { musicAutoStart(); }, { passive: true });
 
     // 按钮点击音效（欢乐斗地主风格），同时预热音效上下文
     document.addEventListener('click', function (ev) {
