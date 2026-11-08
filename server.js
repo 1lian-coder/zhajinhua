@@ -71,6 +71,8 @@ function json(res, code, obj) {
 const TTS_CACHE = new Map(); // text -> { buf, mime }
 const TTS_CACHE_MAX = 300;
 const TTS_VOICE = process.env.ZJH_TTS_VOICE || 'zh-CN-XiaoxiaoNeural';
+const TTS_VER = 'e2'; // 语音版本：换音色/修复后 +1，客户端缓存随之失效
+const FALLBACK_TTL_MS = 60 * 1000; // 旧音兜底缓存 1 分钟后重试荷官音
 const ttsBuckets = new Map();
 
 function ttsAllow(ip) {
@@ -186,20 +188,50 @@ function synthEspeak(text) {
   });
 }
 
-/** 先 Edge 后 espeak；成功就进缓存 */
+/** 先 Edge（重试两次）后 espeak；标记是否兜底 */
 async function synthSpeech(text) {
   let edgeErr = null;
-  try {
-    return await synthEdge(text);
-  } catch (e) {
-    edgeErr = e;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await synthEdge(text);
+      return { buf: r.buf, mime: r.mime, fallback: false, ts: Date.now() };
+    } catch (e) {
+      edgeErr = e;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
+    }
   }
-  try {
-    return await synthEspeak(text);
-  } catch (e2) {
-    const msg = (edgeErr && edgeErr.message ? edgeErr.message : 'edge失败') + ' / ' + (e2.message || 'espeak失败');
-    throw new Error(msg);
-  }
+  console.error('[tts] 荷官音失败，临时回退 espeak:', text, edgeErr && edgeErr.message);
+  const es = await synthEspeak(text);
+  return { buf: es.buf, mime: es.mime, fallback: true, ts: Date.now() };
+}
+
+/* ---- 串行合成队列：同一时间只跑一个合成，避免 edge-tts 并发超时 ---- */
+const ttsTasks = [];
+let ttsRunning = false;
+
+function pumpTts() {
+  if (ttsRunning || !ttsTasks.length) return;
+  ttsRunning = true;
+  const task = ttsTasks.shift();
+  synthSpeech(task.text)
+    .then((entry) => task.resolve(entry))
+    .catch((err) => task.reject(err))
+    .finally(() => {
+      ttsRunning = false;
+      setImmediate(pumpTts);
+    });
+}
+
+function synthQueued(text, priority) {
+  return new Promise((resolve, reject) => {
+    if (priority) ttsTasks.unshift({ text, resolve, reject });
+    else ttsTasks.push({ text, resolve, reject });
+    pumpTts();
+  });
+}
+
+function ttsCacheKey(text) {
+  return TTS_VER + '|' + text;
 }
 
 function cachePut(text, entry) {
@@ -207,7 +239,7 @@ function cachePut(text, entry) {
     const first = TTS_CACHE.keys().next().value;
     if (first !== undefined) TTS_CACHE.delete(first);
   }
-  TTS_CACHE.set(text, entry);
+  TTS_CACHE.set(ttsCacheKey(text), entry);
 }
 
 /* ---- 预生成：玩家进房时热身“XX 已看牌/已弃牌”，让播报几乎即时 ---- */
@@ -215,9 +247,10 @@ const prefetchQueue = [];
 let prefetchBusy = false;
 
 function prefetchTts(texts) {
+  if (ttsTasks.length > 40) return;
   for (const t of texts) {
     const text = sanitizeTtsText(t);
-    if (!text || TTS_CACHE.has(text)) continue;
+    if (!text || TTS_CACHE.has(ttsCacheKey(text))) continue;
     if (prefetchQueue.includes(text)) continue;
     if (prefetchQueue.length >= 300) break;
     prefetchQueue.push(text);
@@ -229,12 +262,12 @@ function prefetchNext() {
   if (prefetchBusy || !prefetchQueue.length) return;
   prefetchBusy = true;
   const text = prefetchQueue.shift();
-  if (TTS_CACHE.has(text)) {
+  if (TTS_CACHE.has(ttsCacheKey(text))) {
     prefetchBusy = false;
     setImmediate(prefetchNext);
     return;
   }
-  synthSpeech(text).then((entry) => {
+  synthQueued(text, false).then((entry) => {
     cachePut(text, entry);
     if (prefetchQueue.length || true) console.log('[tts] 预生成完成:', text);
   }).catch((err) => {
@@ -268,7 +301,8 @@ function sendTts(res, entry) {
   res.writeHead(200, {
     'Content-Type': entry.mime,
     'Content-Length': entry.buf.length,
-    'Cache-Control': 'public, max-age=86400'
+    // 荷官音正常缓存；espeak 兜底不缓存，避免以后一直听到旧音
+    'Cache-Control': entry.fallback ? 'no-store' : 'public, max-age=86400'
   });
   res.end(entry.buf);
 }
@@ -279,8 +313,9 @@ async function handleTts(req, res, params) {
     json(res, 400, { ok: false, error: '缺少文字' });
     return;
   }
-  const cached = TTS_CACHE.get(text);
-  if (cached) {
+  const cacheKey = ttsCacheKey(text);
+  const cached = TTS_CACHE.get(cacheKey);
+  if (cached && !(cached.fallback && Date.now() - cached.ts > FALLBACK_TTL_MS)) {
     sendTts(res, cached);
     return;
   }
@@ -290,7 +325,7 @@ async function handleTts(req, res, params) {
     return;
   }
   try {
-    const entry = await synthSpeech(text);
+    const entry = await synthQueued(text, true);
     cachePut(text, entry);
     sendTts(res, entry);
   } catch (err) {
@@ -1171,7 +1206,9 @@ const server = http.createServer(async (req, res) => {
         rooms: rooms.size,
         players: playerCount,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
-        createPinRequired: !!loadSettings().createPin
+        createPinRequired: !!loadSettings().createPin,
+        ttsVoice: TTS_VOICE,
+        ttsVer: TTS_VER
       });      return;
     }
 

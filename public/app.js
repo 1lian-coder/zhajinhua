@@ -2621,6 +2621,11 @@ var AVATARS = [
 
   // 加 ?sv=1 可强制走服务器语音（测试用）
   var forceServerVoice = /[?&]sv=1/.test(String((typeof location !== 'undefined' && location.search) || ''));
+  var serverVoiceVer = lsGet('zjh.ttsver', 'e2');
+
+  function ttsUrl(text) {
+    return '/api/tts?text=' + encodeURIComponent(text) + '&v=' + encodeURIComponent(serverVoiceVer);
+  }
   var srvQueue = [];
   var srvPlaying = false;
   var srvAudio = null;
@@ -2648,7 +2653,7 @@ var AVATARS = [
     try {
       srvPlaying = true;
       musicDuck(true);
-      var a = new Audio('/api/tts?text=' + encodeURIComponent(t));
+      var a = new Audio(ttsUrl(t));
       a.preload = 'auto';
       srvAudio = a;
       a.onended = function () {
@@ -2711,7 +2716,7 @@ var AVATARS = [
     if (!key || srvPrefetched[key]) return;
     srvPrefetched[key] = 1;
     try {
-      fetch('/api/tts?text=' + encodeURIComponent(key), { cache: 'force-cache' }).catch(function () { /* ignore */ });
+      fetch(ttsUrl(key), { cache: 'force-cache' }).catch(function () { /* ignore */ });
     } catch (e) { /* ignore */ }
   }
 
@@ -4950,7 +4955,13 @@ var AVATARS = [
           return;
         }
         if (dead) dead.hidden = true;
-        // 服务器设置了创建口令 → 首页显示口令输入框
+        // 同步服务器语音版本：换音色后客户端自动换新音频 URL
+    if (h.ttsVer && h.ttsVer !== serverVoiceVer) {
+      serverVoiceVer = String(h.ttsVer);
+      lsSet('zjh.ttsver', serverVoiceVer);
+      srvPrefetched = {};
+    }
+    // 服务器设置了创建口令 → 首页显示口令输入框
         if (h.createPinRequired) showPinField();
       })
       .catch(function () {
