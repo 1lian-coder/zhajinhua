@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const os = require('os');
 
 const { Room, MAX_PLAYERS } = require('./lib/engine');
 
@@ -89,36 +90,43 @@ function sanitizeTtsText(raw) {
 
 function synthSpeech(text) {
   return new Promise((resolve, reject) => {
+    const tmp = path.join(os.tmpdir(), 'zjh-tts-' + crypto.randomBytes(6).toString('hex') + '.wav');
     let child;
+    const cleanup = () => {
+      fs.unlink(tmp, () => { /* ignore */ });
+    };
     try {
-      child = spawn('espeak-ng', ['-v', 'cmn', '-s', '150', '-p', '55', '-w', '-', '--stdin'], {
+      child = spawn('espeak-ng', ['-v', 'cmn', '-s', '150', '-p', '55', '-w', tmp, '--stdin'], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
     } catch (e) {
       reject(e);
       return;
     }
-    const chunks = [];
     let done = false;
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (err) {
+        cleanup();
+        reject(err);
+        return;
+      }
+      fs.readFile(tmp, (readErr, buf) => {
+        cleanup();
+        if (readErr || !buf || !buf.length) reject(new Error('tts 空音频'));
+        else resolve(buf);
+      });
+    };
     const timer = setTimeout(() => {
-      if (done) return;
-      done = true;
       try { child.kill('SIGKILL'); } catch (e) { /* ignore */ }
-      reject(new Error('tts timeout'));
+      finish(new Error('tts timeout'));
     }, 8000);
-    child.stdout.on('data', (d) => chunks.push(d));
-    child.on('error', (err) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      reject(err);
-    });
+    child.on('error', (err) => finish(err));
     child.on('close', (code) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      if (code === 0 && chunks.length) resolve(Buffer.concat(chunks));
-      else reject(new Error('espeak exit ' + code));
+      if (code === 0) finish(null);
+      else finish(new Error('espeak exit ' + code));
     });
     try {
       child.stdin.write(text + '\n');
@@ -126,7 +134,6 @@ function synthSpeech(text) {
     } catch (e) { /* ignore */ }
   });
 }
-
 function sendTts(res, buf) {
   res.writeHead(200, {
     'Content-Type': 'audio/wav',
