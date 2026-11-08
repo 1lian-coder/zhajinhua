@@ -970,7 +970,7 @@ test('观战：人数上限与落盘恢复', () => {
   assert.strictEqual(restored.serialize(sp.id).spectating, true);
 });
 
-test('抢庄：倍数最高者当庄，全部选完后自动进入下注阶段', () => {
+test('抢庄：抢的人中随机定庄，全部选完后自动进入下注阶段', () => {
   const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
   const [a, b, c] = room.order;
   room.startHand(a);
@@ -980,31 +980,29 @@ test('抢庄：倍数最高者当庄，全部选完后自动进入下注阶段',
   assert.strictEqual(room.dealerId, null, '抢庄阶段庄家未定');
   assert.strictEqual(room.pot, QUIET.ante * 3, '底注已收');
 
-  room.act(a, 'bid', { bid: 2 });
-  room.act(b, 'bid', { bid: 4 });
-  room.act(c, 'bid', { bid: 1 });
+  room.act(a, 'bid', { bid: 1 });
+  room.act(b, 'bid', { bid: 1 });
+  room.act(c, 'bid', { bid: 0 });
 
-  // 全员选完应自动定庄
+  // 全员选完应自动定庄：庄家在抢的人（a/b）里随机，不抢的 c 不会当庄
   assert.strictEqual(room.phase, 'playing');
-  assert.strictEqual(room.dealerId, b, '倍数最高的 b 应成为庄家');
-  assert.strictEqual(room.turnId, room.nextInHandAfter(b), '庄家下一位先行动');
+  assert.ok(room.dealerId === a || room.dealerId === b, `庄家应是抢庄的 a 或 b，实际 ${room.dealerId}`);
+  assert.notStrictEqual(room.dealerId, c);
+  assert.strictEqual(room.turnId, room.nextInHandAfter(room.dealerId), '庄家下一位先行动');
 
   // 抢庄阶段已结束，不能再 bid
-  assert.throws(() => room.act(a, 'bid', { bid: 3 }), /不是抢庄阶段/);
+  assert.throws(() => room.act(a, 'bid', { bid: 1 }), /不是抢庄阶段/);
 });
 
-test('抢庄：倍数并列时在并列者中随机确定庄家', () => {
+test('抢庄：只有一个人抢时就是他当庄', () => {
   const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
   const [a, b, c] = room.order;
   room.startHand(a);
-  room.act(a, 'bid', { bid: 3 });
-  room.act(b, 'bid', { bid: 3 });
-  room.act(c, 'bid', { bid: 1 });
-
+  room.act(a, 'bid', { bid: 0 });
+  room.act(b, 'bid', { bid: 1 });
+  room.act(c, 'bid', { bid: 0 });
   assert.strictEqual(room.phase, 'playing');
-  const d = room.dealerId;
-  assert.ok(d === a || d === b, `庄家应是 a 或 b，实际 ${d}`);
-  assert.notStrictEqual(d, c);
+  assert.strictEqual(room.dealerId, b);
 });
 
 test('抢庄：无人抢时按座位轮转确定庄家', () => {
@@ -1022,26 +1020,27 @@ test('抢庄：无人抢时按座位轮转确定庄家', () => {
   assert.notStrictEqual(room.players.get(room.dealerId).bid, null, '未选的应被记为 0');
 });
 
-test('抢庄：非法倍数被拒，非抢庄阶段不能 bid', () => {
+test('抢庄：只能选 0/1（没有倍数），非抢庄阶段不能 bid', () => {
   const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
   const [a] = room.order;
   room.startHand(a);
-  assert.throws(() => room.act(a, 'bid', { bid: 5 }), /抢庄倍数无效/);
-  assert.throws(() => room.act(a, 'bid', { bid: -1 }), /抢庄倍数无效/);
+  assert.throws(() => room.act(a, 'bid', { bid: 5 }), /只能选择/);
+  assert.throws(() => room.act(a, 'bid', { bid: 2 }), /只能选择/);
+  assert.throws(() => room.act(a, 'bid', { bid: -1 }), /只能选择/);
   assert.throws(() => room.act(a, 'call', {}), /抢庄阶段/);
 
   // 未开启抢庄的房间，bid 动作不可用
   const room2 = newRoom(2, QUIET);
   room2.startHand(room2.order[0]);
   assert.strictEqual(room2.phase, 'playing');
-  assert.throws(() => room2.act(room2.turnId, 'bid', { bid: 2 }), /不是抢庄阶段/);
+  assert.throws(() => room2.act(room2.turnId, 'bid', { bid: 1 }), /不是抢庄阶段/);
 });
 
 test('抢庄：人在抢庄阶段退出，人数不足时作废退注', () => {
   const room = newRoom(3, { ...QUIET, dealerBid: true, bidSeconds: 5, turnSeconds: 0 });
   const [a, b, c] = room.order;
   room.startHand(a);
-  room.act(a, 'bid', { bid: 2 });
+  room.act(a, 'bid', { bid: 1 });
   room.removePlayer(b);
   room.removePlayer(c);
 
@@ -1588,48 +1587,33 @@ test('积分：新玩家从 0 开始；房主可重置所有人积分（局间�
   }
 });
 
-test('看牌跟注递增翻倍：闷10 → 看20 → 看40 → 看80；关闭开关则不递增', () => {
-  const room = newRoom(3, {
-    ...QUIET, turnSeconds: 0, maxStake: 100, seeMultiplier: 2, seenLadder: true, maxPot: 99999
+test('看牌跟注不递增：闷牌付单注，看牌者一律付 单注×看牌倍数（都是 40）', () => {
+  const room = newRoom(4, {
+    ...QUIET, turnSeconds: 0, maxStake: 100, seeMultiplier: 2, maxPot: 99999
   });
-  const [a, b, c] = room.order;
+  const [a, b, c, d] = room.order;
   room.startHand(a); // 庄 a，先行动 b
 
-  // b 闷牌跟注：付 10，单注不翻倍
+  // b 闷牌跟注：付单注 10
   room.act(b, 'call');
   assert.strictEqual(room.players.get(b).bet, 20, '闷牌：底注10 + 跟注10');
-  assert.strictEqual(room.stake, 10, '闷牌不触发翻倍');
+  assert.strictEqual(room.stake, 10, '闷牌不改变单注');
 
-  // c 看牌跟注：10×2 = 20，单注翻到 20
+  // c 看牌跟注：单注10 × 2 = 20
   room.look(c);
   room.act(c, 'call');
   assert.strictEqual(room.players.get(c).bet, 30, '看牌：底注10 + 跟注20');
-  assert.strictEqual(room.stake, 20, '看牌跟注后单注翻倍');
 
-  // a 看牌跟注：20×2 = 40
+  // d 看牌跟注：仍然 20（不在上一个看牌者基础上再翻倍）
+  room.look(d);
+  room.act(d, 'call');
+  assert.strictEqual(room.players.get(d).bet, 30, '第二个看牌者也是跟 20');
+
+  // a 看牌跟注：仍然 20
   room.look(a);
   room.act(a, 'call');
-  assert.strictEqual(room.players.get(a).bet, 50, '看牌：底注10 + 跟注40');
-  assert.strictEqual(room.stake, 40);
-
-  // b 现在也看牌再跟：40×2 = 80
-  room.look(b);
-  room.act(b, 'call');
-  assert.strictEqual(room.players.get(b).bet, 100, '累计：10+10+80');
-  assert.strictEqual(room.stake, 80, '继续翻倍到 80');
-
-  // 关闭开关：不再递增（恒为单注×看牌倍数）
-  const room2 = newRoom(3, {
-    ...QUIET, turnSeconds: 0, maxStake: 100, seeMultiplier: 2, seenLadder: false, maxPot: 99999
-  });
-  const [x, y, z] = room2.order;
-  room2.startHand(x);
-  room2.look(y);
-  room2.act(y, 'call');
-  const s1 = room2.stake;
-  room2.look(z);
-  room2.act(z, 'call');
-  assert.strictEqual(room2.stake, s1, '关闭后单注不随看牌跟注增长');
+  assert.strictEqual(room.players.get(a).bet, 30, '第三个看牌者还是跟 20');
+  assert.strictEqual(room.stake, 10, '看牌跟注不会推高单注');
 });
 
 test('单注从底分推导：底分 2 → 单注 2，可加注到 4/8/16/32', () => {

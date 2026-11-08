@@ -39,7 +39,6 @@ var AVATARS = [
     { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
-    { key: 'seenLadder', label: '看牌跟注递增翻倍', type: 'bool', def: true },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -1431,7 +1430,14 @@ var AVATARS = [
       else if ((m = text.match(/^(.{1,12}?) 约 .+? 比牌/))) { pid = pidByName(st, m[1]); cls = 'pop-compare'; label = '比牌'; }
       else if ((m = text.match(/^(.{1,12}?) 超时/))) { pid = pidByName(st, m[1]); cls = 'pop-timeout'; label = '超时弃牌'; }
       else if ((m = text.match(/^(.{1,12}?) 弃牌/))) { pid = pidByName(st, m[1]); cls = 'pop-fold'; label = '弃牌'; }
-      if (pid && label) popActionBubble(pid, cls, label);
+      if (pid && label) {
+        popActionBubble(pid, cls, label);
+        // 欢乐斗地主风格音效
+        if (cls === 'pop-call') sfx('bet');
+        else if (cls === 'pop-raise' || cls === 'pop-allin') sfx('raise');
+        else if (cls === 'pop-fold' || cls === 'pop-timeout') sfx('fold');
+        else if (cls === 'pop-compare') sfx('compare');
+      }
     }
     lastActionT = maxT;
   }
@@ -2008,7 +2014,7 @@ var AVATARS = [
   var mTimer = null;
   var mNextTime = 0;
   var mStep = 0;
-  var M_TEMPO = 92;
+  var M_TEMPO = 112;
   var M_STEP_DUR = 60 / M_TEMPO / 4; // 十六分音符
   var M_TOTAL = 64;                  // 4 小节 × 16 步
   var M_KICK = null;
@@ -2141,18 +2147,23 @@ var AVATARS = [
     var bar = Math.floor(step / 16) % 4;
     var inBar = step % 16;
     var chord = M_CHORDS[bar];
+    // 每拍底鼓（欢乐斗地主那种“咚 咚 咚咚”的节奏）
+    if (inBar % 4 === 0) {
+      mKick(t);
+    }
     if (inBar === 0) {
       mPad(t, chord.pad);
       mTone(t, chord.bass, 0.05, 1.2, 'sine');
-      mKick(t);
     }
     if (inBar === 8) {
       mTone(t, chord.bass - 12, 0.035, 0.8, 'sine');
-      mKick(t);
     }
+    // 八分音符沙锤
+    if (inBar % 2 === 1) mHat(t);
+    // 反拍加个轻巧的“嗒”
+    if (inBar === 4 || inBar === 12) mHat(t);
     var note = M_MELODY[step];
-    if (note != null) mTone(t, note, 0.045, 0.45, 'triangle');
-    if (inBar % 4 === 2) mHat(t);
+    if (note != null) mTone(t, note, 0.045, 0.35, 'triangle');
   }
 
   function mScheduleLoop() {
@@ -2219,6 +2230,126 @@ var AVATARS = [
   }
 
   // 调试/验收用：查看音乐状态（不影响功能）
+  /* ------------------------------------------ 音效（欢乐斗地主风格） */
+
+  var sfxCtx2 = null;
+  var sfxGain2 = null;
+  var sfxHatBuf = null;
+
+  function sfxInit() {
+    if (sfxCtx2) return true;
+    if (!soundOn) return false;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      sfxCtx2 = new AC();
+      sfxGain2 = sfxCtx2.createGain();
+      sfxGain2.gain.value = 0.3;
+      sfxGain2.connect(sfxCtx2.destination);
+      var len = Math.floor(sfxCtx2.sampleRate * 0.08);
+      var buf = sfxCtx2.createBuffer(1, len, sfxCtx2.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      sfxHatBuf = buf;
+    } catch (e) {
+      sfxCtx2 = null;
+      return false;
+    }
+    return true;
+  }
+
+  function sfxTone(freq, dur, type, vol, when) {
+    if (!sfxInit()) return;
+    try {
+      if (sfxCtx2.state === 'suspended') sfxCtx2.resume();
+      var t = (when || 0) + sfxCtx2.currentTime;
+      var o = sfxCtx2.createOscillator();
+      var g = sfxCtx2.createGain();
+      o.type = type || 'triangle';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g);
+      g.connect(sfxGain2);
+      o.start(t);
+      o.stop(t + dur + 0.03);
+    } catch (e) { /* ignore */ }
+  }
+
+  function sfxNoise(dur, vol, highpass) {
+    if (!sfxInit() || !sfxHatBuf) return;
+    try {
+      if (sfxCtx2.state === 'suspended') sfxCtx2.resume();
+      var src = sfxCtx2.createBufferSource();
+      src.buffer = sfxHatBuf;
+      var f = sfxCtx2.createBiquadFilter();
+      f.type = highpass ? 'highpass' : 'bandpass';
+      f.frequency.value = highpass ? 2800 : 900;
+      var g = sfxCtx2.createGain();
+      var t = sfxCtx2.currentTime;
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f);
+      f.connect(g);
+      g.connect(sfxGain2);
+      src.start(t);
+    } catch (e) { /* ignore */ }
+  }
+
+  /** 音效总入口：click/deal/bet/raise/fold/compare/turn/win/lose */
+  function sfx(name) {
+    if (!soundOn) return;
+    if (!sfxInit()) return;
+    try {
+      switch (name) {
+        case 'click':
+          sfxTone(1150, 0.045, 'square', 0.05);
+          break;
+        case 'deal':
+          sfxTone(520, 0.06, 'triangle', 0.11, 0);
+          sfxTone(660, 0.06, 'triangle', 0.11, 0.06);
+          sfxTone(820, 0.07, 'triangle', 0.11, 0.12);
+          break;
+        case 'bet':
+          sfxNoise(0.05, 0.12);
+          sfxTone(900, 0.05, 'square', 0.05, 0.02);
+          break;
+        case 'raise':
+          sfxNoise(0.05, 0.12);
+          sfxTone(700, 0.06, 'square', 0.06, 0.02);
+          sfxTone(1050, 0.07, 'square', 0.06, 0.08);
+          break;
+        case 'fold':
+          sfxNoise(0.12, 0.1, true);
+          sfxTone(320, 0.12, 'sine', 0.07);
+          break;
+        case 'compare':
+          sfxTone(180, 0.16, 'sine', 0.16);
+          sfxNoise(0.08, 0.14);
+          sfxTone(1000, 0.05, 'square', 0.06, 0.05);
+          break;
+        case 'turn':
+          sfxTone(880, 0.1, 'square', 0.06);
+          sfxTone(1320, 0.12, 'square', 0.05, 0.1);
+          break;
+        case 'win':
+          sfxTone(523, 0.13, 'triangle', 0.13, 0);
+          sfxTone(659, 0.13, 'triangle', 0.13, 0.1);
+          sfxTone(784, 0.13, 'triangle', 0.13, 0.2);
+          sfxTone(1047, 0.18, 'triangle', 0.14, 0.3);
+          break;
+        case 'lose':
+          sfxTone(392, 0.15, 'sine', 0.1, 0);
+          sfxTone(330, 0.15, 'sine', 0.1, 0.1);
+          sfxTone(262, 0.2, 'sine', 0.1, 0.2);
+          break;
+        default:
+          break;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
   window.__zjhMusic = function () {
     return {
       on: musicOn,
@@ -2342,6 +2473,15 @@ var AVATARS = [
     }
 
     if (phaseChanged) {
+      // 音效：发牌 / 赢 / 输（欢乐斗地主风格）
+      if (!st.spectating) {
+        if (st.phase === 'showdown' && prevPhase !== 'showdown') {
+          var iWonFx = ((st.lastResult && st.lastResult.winners) || []).some(function (w) { return w.id === meId(); });
+          sfx(iWonFx ? 'win' : 'lose');
+        } else if ((st.phase === 'playing' || st.phase === 'bidding') && (prevPhase === 'lobby' || prevPhase === 'showdown')) {
+          sfx('deal');
+        }
+      }
       try {
         if (st.phase === 'showdown') {
           // 开启「每局结束亮出所有牌」时，停留在牌桌看大家亮牌；否则滚到结算面板
@@ -2454,7 +2594,7 @@ var AVATARS = [
     if (st.phase === 'bidding') {
       if (p.bid == null) list.push({ cls: 'waiting', text: '待选' });
       else if (p.bid === 0) list.push({ cls: 'pass', text: '不抢' });
-      else list.push({ cls: 'grab', text: '抢x' + p.bid });
+      else list.push({ cls: 'grab', text: '抢庄' });
     }
 
     if (st.phase === 'lobby') {
@@ -2687,9 +2827,9 @@ var AVATARS = [
       hint = '等待开局 · 房主可在下方设置规则';
     } else if (st.phase === 'bidding') {
       if (!st.inHand) hint = '本局未参与 · 等待定庄';
-      else if (st.myBid == null) hint = '抢庄阶段 · 先看牌，再选「不抢」或「抢庄」倍数';
+      else if (st.myBid == null) hint = '抢庄阶段 · 先看牌，再选「不抢」或「抢庄」';
       else if (st.myBid === 0) hint = '已选「不抢」· 等待其他玩家';
-      else hint = '已选「抢庄 x' + st.myBid + '」· 等待其他玩家';
+      else hint = '已选「抢庄」· 等待其他玩家';
     } else if (st.phase === 'showdown') {
       hint = cards ? '本局已结束，牌面见下方结算' : '本局已结束，见下方结算';
     } else if (!st.inHand) {
@@ -3546,11 +3686,11 @@ var AVATARS = [
         if (busy) {
           status.textContent = '提交中…';
         } else {
-          status.textContent = '请选择：抢庄（选倍数）或不抢';
+          status.textContent = '请选择：抢庄 或不抢';
         }
       } else {
         status.className = 'bid-status choice';
-        var label = myBid === 0 ? '已选择：不抢' : '已选择：抢庄 x' + myBid;
+        var label = myBid === 0 ? '已选择：不抢' : '已选择：抢庄';
         if (pending > 0) {
           status.textContent = label + ' · 等待其他玩家（还剩 ' + pending + ' 人未选）…';
         } else {
@@ -3800,31 +3940,9 @@ var AVATARS = [
     postAction('bid', { bid: bid });
   }
 
+  /* 抢庄不再带倍数：点「抢庄」直接提交（保留空函数兼容旧引用） */
   function openBidGrab() {
-    if (!session || busy) return;
-    var html = '<div class="opt-list">';
-    for (var i = 1; i <= 4; i++) {
-      html += '<button type="button" class="opt-btn" data-bid="' + i + '">' +
-        '<span class="opt-main">抢庄 x' + i + '</span>' +
-        '<span class="opt-cost">倍数为 ' + i + ' 倍</span>' +
-        '</button>';
-    }
-    html += '</div><div class="modal-btns">' +
-      '<button type="button" class="btn btn-ghost" data-close="1">取消</button></div>';
-
-    var root = showModal(html, { title: '选择抢庄倍数' });
-    var btns = root.querySelectorAll('.opt-btn');
-    for (var b = 0; b < btns.length; b++) {
-      (function (btn) {
-        btn.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          var bid = Number(btn.getAttribute('data-bid'));
-          closeModal();
-          if (!bid) return;
-          doBid(bid);
-        });
-      })(btns[b]);
-    }
+    doBid(1);
   }
 
   function doAllin() {
@@ -4145,7 +4263,7 @@ var AVATARS = [
     });
     $('btn-bid-grab').addEventListener('click', function () {
       if (this.disabled) return;
-      openBidGrab();
+      doBid(1);
     });
     $('btn-bid-look').addEventListener('click', function () {
       if (this.disabled) return;
@@ -4244,6 +4362,18 @@ var AVATARS = [
         window.speechSynthesis.speak(u);
       } catch (e) { /* ignore */ }
     }, { passive: true });
+
+    // 按钮点击音效（欢乐斗地主风格），同时预热音效上下文
+    document.addEventListener('click', function (ev) {
+      var el = ev.target;
+      while (el && el !== document) {
+        if (el.tagName === 'BUTTON') {
+          sfx('click');
+          break;
+        }
+        el = el.parentNode;
+      }
+    }, true);
   }
 
   /* ------------------------------------------------------- 服务连通性 & 口令 */
