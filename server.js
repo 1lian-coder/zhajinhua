@@ -71,7 +71,7 @@ function json(res, code, obj) {
 const TTS_CACHE = new Map(); // text -> { buf, mime }
 const TTS_CACHE_MAX = 300;
 const TTS_VOICE = process.env.ZJH_TTS_VOICE || 'zh-CN-XiaoxiaoNeural';
-const TTS_VER = 'e2'; // 语音版本：换音色/修复后 +1，客户端缓存随之失效
+const TTS_VER = 'p1'; // 语音版本：换音色/修复后 +1，客户端缓存随之失效
 const FALLBACK_TTL_MS = 60 * 1000; // 旧音兜底缓存 1 分钟后重试荷官音
 const ttsBuckets = new Map();
 
@@ -188,21 +188,118 @@ function synthEspeak(text) {
   });
 }
 
-/** 先 Edge（重试两次）后 espeak；标记是否兜底 */
+/* ---------------- Piper 本地神经语音（优先：不联网、约 0.3~0.5 秒/句） ---------------- */
+const PIPER_BIN = process.env.PIPER_BIN || '/opt/zhajinhua/tools/piper/piper/piper';
+const PIPER_MODEL = process.env.PIPER_MODEL || '/opt/zhajinhua/tools/piper/voices/zh_CN-huayan-medium.onnx';
+const PIPER_DIR = process.env.PIPER_OUT_DIR || '/tmp/zjh-piper-out';
+const piperQueue = [];
+let piperProc = null;
+
+function ensurePiper() {
+  if (piperProc) return piperProc;
+  try {
+    if (!fs.existsSync(PIPER_BIN)) return null;
+    fs.mkdirSync(PIPER_DIR, { recursive: true });
+    const p = spawn(PIPER_BIN, ['--model', PIPER_MODEL, '--output_dir', PIPER_DIR], {
+      cwd: path.dirname(PIPER_BIN),
+      env: Object.assign({}, process.env, { LD_LIBRARY_PATH: path.dirname(PIPER_BIN) + ':' + (process.env.LD_LIBRARY_PATH || '') }),
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    let buf = '';
+    p.stdout.on('data', (d) => {
+      buf += d.toString();
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!/\.wav$/.test(line)) continue;
+        const task = piperQueue.shift();
+        if (!task) continue;
+        fs.readFile(line, (err, data) => {
+          fs.unlink(line, () => { /* ignore */ });
+          if (err || !data || data.length < 100) task.reject(new Error('piper 读取失败'));
+          else task.resolve({ buf: data, mime: 'audio/wav' });
+        });
+      }
+    });
+    p.stderr.on('data', () => { /* 忽略日志 */ });
+    p.on('error', () => {
+      piperProc = null;
+    });
+    p.on('exit', () => {
+      piperProc = null;
+      while (piperQueue.length) {
+        const t = piperQueue.shift();
+        try { t.reject(new Error('piper 退出')); } catch (e) { /* ignore */ }
+      }
+    });
+    piperProc = p;
+    return piperProc;
+  } catch (e) {
+    piperProc = null;
+    return null;
+  }
+}
+
+/** 交给常驻 piper 合成一句，返回 { buf, mime: 'audio/wav' } */
+function piperSpeak(text) {
+  return new Promise((resolve, reject) => {
+    const proc = ensurePiper();
+    if (!proc) {
+      reject(new Error('piper 不可用'));
+      return;
+    }
+    const task = { resolve, reject, done: false };
+    piperQueue.push(task);
+    const timer = setTimeout(() => {
+      if (task.done) return;
+      task.done = true;
+      const i = piperQueue.indexOf(task);
+      if (i >= 0) piperQueue.splice(i, 1);
+      reject(new Error('piper 超时'));
+      try { proc.kill('SIGKILL'); } catch (e) { /* ignore */ }
+      piperProc = null;
+    }, 5000);
+    const wrap = (fn) => (v) => {
+      if (task.done) return;
+      task.done = true;
+      clearTimeout(timer);
+      fn(v);
+    };
+    task.resolve = wrap(resolve);
+    task.reject = wrap(reject);
+    try {
+      proc.stdin.write(text + '\n');
+    } catch (e) {
+      task.reject(e);
+    }
+  });
+}
+/** 合成顺序：本地 Piper（最快）→ Edge 云端（更好听，重试两次）→ espeak（兜底） */
 async function synthSpeech(text) {
+  try {
+    const r = await piperSpeak(text);
+    return { buf: r.buf, mime: r.mime, fallback: false, engine: 'piper', ts: Date.now() };
+  } catch (piperErr) {
+    // 本地合成不可用时再走云端
+    if (!global.__piperWarned) {
+      global.__piperWarned = true;
+      console.error('[tts] piper 不可用，改用云端语音:', piperErr && piperErr.message);
+    }
+  }
   let edgeErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const r = await synthEdge(text);
-      return { buf: r.buf, mime: r.mime, fallback: false, ts: Date.now() };
+      return { buf: r.buf, mime: r.mime, fallback: false, engine: 'edge', ts: Date.now() };
     } catch (e) {
       edgeErr = e;
       if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
     }
   }
-  console.error('[tts] 荷官音失败，临时回退 espeak:', text, edgeErr && edgeErr.message);
+  console.error('[tts] piper/edge 都失败，临时回退 espeak:', text, edgeErr && edgeErr.message);
   const es = await synthEspeak(text);
-  return { buf: es.buf, mime: es.mime, fallback: true, ts: Date.now() };
+  return { buf: es.buf, mime: es.mime, fallback: true, engine: 'espeak', ts: Date.now() };
 }
 
 /* ---- 串行合成队列：同一时间只跑一个合成，避免 edge-tts 并发超时 ---- */
@@ -276,6 +373,18 @@ function prefetchNext() {
     prefetchBusy = false;
     setImmediate(prefetchNext);
   });
+}
+
+function prefetchTurnVoice(room) {
+  try {
+    if (!room || room.phase !== 'playing' || !room.turnId) return;
+    const p = room.players.get(room.turnId);
+    if (!p) return;
+    const cost = room.callCost(p);
+    const texts = [p.name + ' 押注 ' + cost, p.name + ' 已弃牌', p.name + ' 已比牌'];
+    if (!p.seen) texts.push(p.name + ' 已看牌');
+    prefetchTts(texts);
+  } catch (e) { /* ignore */ }
 }
 
 function warmBetVoice(room) {
@@ -578,6 +687,7 @@ function loadState() {
 function broadcast(room) {
   if (!room) return;
   maybeRecordHand(room);
+  prefetchTurnVoice(room);
   markDirty();
   const byPlayer = streams.get(room.id);
   if (!byPlayer || byPlayer.size === 0) return;
@@ -1383,6 +1493,7 @@ function shutdown(signal) {
   } catch (e) {
     /* ignore */
   }
+  try { if (piperProc) piperProc.kill('SIGKILL'); } catch (e) { /* ignore */ }
   clearInterval(tickTimer);
   clearInterval(pingTimer);
   clearInterval(gcTimer);
@@ -1403,6 +1514,12 @@ server.on('clientError', (err, socket) => {
 
 loadState();
 loadRecords();
+setTimeout(() => {
+  piperSpeak('语音播报已开启').then((r) => {
+    cachePut('语音播报已开启', { buf: r.buf, mime: r.mime, fallback: false, engine: 'piper', ts: Date.now() });
+    console.log('[tts] piper 就绪');
+  }).catch((e) => console.error('[tts] piper 预热失败:', e && e.message));
+}, 1500);
 
 server.listen(PORT, HOST, () => {
   const pkg = (() => {
