@@ -501,7 +501,7 @@ test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代�
   assert.throws(() => room2.revealWin(room2.order[0]), /不是弃牌获胜/);
 });
 
-test('每轮局数：打满后停止自动连开，继续玩则再开一轮', () => {
+test('每轮局数：打满后停止自动连开，且本房间不能再开下一局（必须新开房间）', () => {
   const room = newRoom(2, {
     ...QUIET,
     turnSeconds: 0,
@@ -529,11 +529,14 @@ test('每轮局数：打满后停止自动连开，继续玩则再开一轮', ()
   assert.strictEqual(room.lastResult.sessionOver, true, '打满 2 局应标记本轮结束');
   assert.strictEqual(room.nextHandAt, 0, '本轮结束不应自动连开');
 
-  // 继续玩：再开同样局数的一轮
-  room.nextHand(a);
-  assert.strictEqual(room.phase, 'playing');
-  assert.strictEqual(room.config.sessionHands, 4, '继续后应再给 2 局（累计到 4）');
-  assert.strictEqual(room.handNo, 3);
+  // 本房间不允许再开下一局
+  assert.throws(() => room.nextHand(a), /需要新开房间/, '打满后本房间不能继续开局');
+  assert.throws(() => room.startHand(a), /需要新开房间|已打完/, '直接 startHand 也要被拦？');
+
+  // 换新房间：同样的配置可以正常开局
+  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, sessionHands: 2 });
+  room2.startHand(room2.order[0]);
+  assert.strictEqual(room2.phase, 'playing');
 });
 
 test('看牌不是回合动作：没轮到自己也能看（HTTP /api/look 与 action=look 行为一致）', () => {
@@ -1504,13 +1507,17 @@ test('每局输赢 + 每轮总结：deltas 零和，roundSummary 累计，再来
   const netA = room.players.get(a).net;
   assert.strictEqual(r2.roundSummary.find((x) => x.id === a).delta, netA, '本轮总结与净分一致');
 
-  // 再来一轮：总结重新累计
-  room.nextHand(a);
-  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
-  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
-  room.turnId = a;
-  room.act(a, 'compare', { target: b });
-  const r3 = room.lastResult;
-  assert.strictEqual(r3.sessionOver, undefined, '新一轮还没打满');
-  assert.ok(r3.deltas, '新一轮每局输赢照常');
+  // 本轮打满后本房间不能再开下一局（必须新开房间）
+  assert.throws(() => room.nextHand(a), /需要新开房间/);
+
+  // 新房间：输赢统计重新累计
+  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, sessionHands: 2 });
+  room2.startHand(room2.order[0]);
+  forceCards(room2, room2.order[0], [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room2, room2.order[1], [card('S', 5), card('H', 6), card('D', 7)]);
+  room2.turnId = room2.order[0];
+  room2.act(room2.order[0], 'compare', { target: room2.order[1] });
+  const r3 = room2.lastResult;
+  assert.strictEqual(r3.sessionOver, undefined, '新房间重新开始计数');
+  assert.ok(r3.deltas, '新房间每局输赢照常');
 });

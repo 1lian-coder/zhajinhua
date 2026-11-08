@@ -3113,3 +3113,8 @@ input {
   width: 100%;
   margin-top: 8px;
 }
+.session-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: -4px 0 10px;
+}

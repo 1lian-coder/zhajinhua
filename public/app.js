@@ -2679,14 +2679,15 @@ var AVATARS = [
       }
     }
 
-    // ---- 每轮局数打满：选择继续玩还是结束 ----
+    // ---- 每轮局数打满：本房间不能再开下一局，要新开房间 ----
     if (r.sessionOver) {
       var targetHands = (st.config && st.config.sessionHands) || 0;
       html += '<div class="session-over">' +
         '<div class="session-title">🏁 本轮 ' + esc(targetHands || r.handNo) + ' 局已打完</div>' +
+        '<div class="session-sub">本房间不能再开下一局，请新开房间继续</div>' +
         '<div class="session-btns">' +
-        '<button id="btn-continue-round" class="btn btn-primary" type="button">再来一轮</button>' +
-        '<button id="btn-finish-round" class="btn btn-ghost" type="button">不玩了，离开</button>' +
+        '<button id="btn-new-room" class="btn btn-primary" type="button">新开房间</button>' +
+        '<button id="btn-finish-round" class="btn btn-ghost" type="button">离开</button>' +
         '</div></div>';
     }
 
@@ -2883,10 +2884,10 @@ var AVATARS = [
       });
     }
 
-    // 本轮打满：再来一轮 / 不玩了
-    var continueBtn = panel.querySelector('#btn-continue-round');
-    if (continueBtn) {
-      continueBtn.addEventListener('click', function () { doStart(); });
+    // 本轮打满：新开房间 / 离开
+    var newRoomBtn = panel.querySelector('#btn-new-room');
+    if (newRoomBtn) {
+      newRoomBtn.addEventListener('click', function () { startNewRoom(); });
     }
     var finishBtn = panel.querySelector('#btn-finish-round');
     if (finishBtn) {
@@ -3231,9 +3232,10 @@ var AVATARS = [
       } else if (st.phase === 'showdown') {
         actions.hidden = true;
         primary.hidden = false;
+        var roundOver = !!(st.lastResult && st.lastResult.sessionOver);
         primary.disabled = busy;
-        primary.textContent = '下一局';
-        tipText = '本局结束 · 准备下一局';
+        primary.textContent = roundOver ? '新开房间（本轮已结束）' : '下一局';
+        tipText = roundOver ? '本轮局数已打完 · 本房间不能再开，请新开房间' : '本局结束 · 准备下一局';
       } else {
         actions.hidden = true;
         primary.hidden = false;
@@ -3531,6 +3533,11 @@ var AVATARS = [
 
   function doStart() {
     if (!session || busy) return;
+    // 本轮局数已打完：不能再开下一局，直接新开房间
+    if (state && state.lastResult && state.lastResult.sessionOver) {
+      startNewRoom();
+      return;
+    }
     setBusy(true);
     var btn = $('btn-bottom');
     if (btn) btn.disabled = true;
@@ -3547,6 +3554,41 @@ var AVATARS = [
       }
       if (!connected) scheduleVerify(800);
     });
+  }
+
+  /** 本轮打满后：退出当前房间，按保存的配置新开一间 */
+  function startNewRoom() {
+    if (!session || busy) return;
+    var s = session;
+    var name = String($('nickname').value || lsGet(NICK_KEY, '') || '').trim();
+    busy = true;
+    var go = function () {
+      closeStream();
+      session = null;
+      state = null;
+      var cfg = loadCreateConfig();
+      api('/api/create', {
+        name: name,
+        config: cfg,
+        pin: readCreatePin(),
+        avatar: readAvatar()
+      }).then(function (res) {
+        busy = false;
+        if (!res || !res.ok) {
+          toast((res && res.error) || '新开房间失败', 'err');
+          showHome({});
+          return;
+        }
+        lsSet(CREATE_KEY, JSON.stringify(cfg));
+        enterRoom({ roomId: res.roomId, playerId: res.playerId, token: res.token, name: name });
+      }, function () {
+        busy = false;
+        toast('连不上服务器，新开房间失败', 'err');
+        showHome({});
+      });
+    };
+    api('/api/leave', { roomId: s.roomId, playerId: s.playerId, token: s.token })
+      .then(go, go);
   }
 
   function doExit() {
