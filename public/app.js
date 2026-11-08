@@ -682,6 +682,7 @@ var AVATARS = [
 
   function showHome(opts) {
     opts = opts || {};
+    musicStop();
     closeStream();
     if (verifyTimer) {
       clearTimeout(verifyTimer);
@@ -758,6 +759,8 @@ var AVATARS = [
     showScreen('table');
     showConn('连接中…');
     connected = false;
+    updateMusicBtn();
+    musicStart();
     openStream();
   }
 
@@ -1946,6 +1949,236 @@ var AVATARS = [
     var b = $('btn-sound');
     if (b) b.textContent = soundOn ? '🔊' : '🔇';
   }
+
+  /* ------------------------------------------------ 背景音乐（Web Audio 合成） */
+
+  var MUSIC_KEY = 'zjh.music.v1';
+  var musicOn = lsGet(MUSIC_KEY, '1') !== '0';
+  var mCtx = null;
+  var mGain = null;
+  var mTimer = null;
+  var mNextTime = 0;
+  var mStep = 0;
+  var M_TEMPO = 92;
+  var M_STEP_DUR = 60 / M_TEMPO / 4; // 十六分音符
+  var M_TOTAL = 64;                  // 4 小节 × 16 步
+  var M_KICK = null;
+  var M_HAT = null;
+
+  // 和弦（每小节一个）：Am - F - C - G，五声音阶旋律
+  var M_CHORDS = [
+    { bass: 45, pad: [57, 60, 64] }, // Am
+    { bass: 41, pad: [53, 57, 60] }, // F
+    { bass: 48, pad: [55, 60, 64] }, // C
+    { bass: 43, pad: [50, 55, 59] }  // G
+  ];
+  var M_MELODY = [
+    // Am
+    69, null, 72, null, 76, null, 74, null, 72, null, 69, null, null, null, null, null,
+    // F
+    69, null, 72, null, 77, null, 76, null, 72, null, 69, null, null, null, null, null,
+    // C
+    72, null, 76, null, 79, null, 76, null, 74, null, 72, null, null, null, null, null,
+    // G
+    74, null, 71, null, 74, null, 79, null, 76, null, 74, null, null, null, null, null
+  ];
+
+  function mNoteFreq(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  function ensureMusicCtx() {
+    if (mCtx) return true;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      mCtx = new AC();
+      mGain = mCtx.createGain();
+      mGain.gain.value = 0.0001;
+      mGain.connect(mCtx.destination);
+      // 软一点的总音色
+      var lp = mCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3200;
+      mGain.disconnect();
+      mGain.connect(lp);
+      lp.connect(mCtx.destination);
+      // 预生成噪声（hihat 用）
+      var len = Math.floor(mCtx.sampleRate * 0.06);
+      var buf = mCtx.createBuffer(1, len, mCtx.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      M_HAT = buf;
+      M_KICK = true;
+    } catch (e) {
+      mCtx = null;
+      return false;
+    }
+    return true;
+  }
+
+  function mTone(t, midi, gainVal, dur, type) {
+    try {
+      var osc = mCtx.createOscillator();
+      var g = mCtx.createGain();
+      osc.type = type || 'triangle';
+      osc.frequency.value = mNoteFreq(midi);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(gainVal, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(g);
+      g.connect(mGain);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) { /* ignore */ }
+  }
+
+  function mPad(t, notes) {
+    for (var i = 0; i < notes.length; i++) {
+      (function (midi) {
+        try {
+          var osc = mCtx.createOscillator();
+          var g = mCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = mNoteFreq(midi);
+          g.gain.setValueAtTime(0.0001, t);
+          g.gain.linearRampToValueAtTime(0.022, t + 0.5);
+          g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+          osc.connect(g);
+          g.connect(mGain);
+          osc.start(t);
+          osc.stop(t + 2.5);
+        } catch (e) { /* ignore */ }
+      })(notes[i] + 12);
+    }
+  }
+
+  function mKick(t) {
+    try {
+      var osc = mCtx.createOscillator();
+      var g = mCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, t);
+      osc.frequency.exponentialRampToValueAtTime(48, t + 0.16);
+      g.gain.setValueAtTime(0.085, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+      osc.connect(g);
+      g.connect(mGain);
+      osc.start(t);
+      osc.stop(t + 0.22);
+    } catch (e) { /* ignore */ }
+  }
+
+  function mHat(t) {
+    if (!M_HAT) return;
+    try {
+      var src = mCtx.createBufferSource();
+      src.buffer = M_HAT;
+      var hp = mCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 6500;
+      var g = mCtx.createGain();
+      g.gain.setValueAtTime(0.014, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      src.connect(hp);
+      hp.connect(g);
+      g.connect(mGain);
+      src.start(t);
+    } catch (e) { /* ignore */ }
+  }
+
+  /** 调度一步（16 分音符）：和弦垫底 + 拨弦旋律 + 轻打击 */
+  function mScheduleStep(step, t) {
+    var bar = Math.floor(step / 16) % 4;
+    var inBar = step % 16;
+    var chord = M_CHORDS[bar];
+    if (inBar === 0) {
+      mPad(t, chord.pad);
+      mTone(t, chord.bass, 0.05, 1.2, 'sine');
+      mKick(t);
+    }
+    if (inBar === 8) {
+      mTone(t, chord.bass - 12, 0.035, 0.8, 'sine');
+      mKick(t);
+    }
+    var note = M_MELODY[step];
+    if (note != null) mTone(t, note, 0.045, 0.45, 'triangle');
+    if (inBar % 4 === 2) mHat(t);
+  }
+
+  function mScheduleLoop() {
+    if (!mCtx) return;
+    var ahead = mCtx.currentTime + 0.35;
+    while (mNextTime < ahead) {
+      mScheduleStep(mStep, mNextTime);
+      mStep = (mStep + 1) % M_TOTAL;
+      mNextTime += M_STEP_DUR;
+    }
+  }
+
+  function musicStart() {
+    if (!musicOn) return;
+    if (!ensureMusicCtx()) return;
+    try {
+      if (mCtx.state === 'suspended') mCtx.resume();
+      if (mGain) {
+        mGain.gain.cancelScheduledValues(mCtx.currentTime);
+        mGain.gain.setValueAtTime(Math.max(0.0001, mGain.gain.value), mCtx.currentTime);
+        mGain.gain.linearRampToValueAtTime(0.1, mCtx.currentTime + 1.4);
+      }
+      if (!mTimer) {
+        mNextTime = mCtx.currentTime + 0.08;
+        mTimer = setInterval(mScheduleLoop, 90);
+        mScheduleLoop();
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  function musicStop() {
+    if (mTimer) {
+      clearInterval(mTimer);
+      mTimer = null;
+    }
+    if (mCtx && mGain) {
+      try {
+        mGain.gain.cancelScheduledValues(mCtx.currentTime);
+        mGain.gain.setValueAtTime(mGain.gain.value, mCtx.currentTime);
+        mGain.gain.linearRampToValueAtTime(0.0001, mCtx.currentTime + 0.5);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  function updateMusicBtn() {
+    var b = $('btn-music');
+    if (b) {
+      b.textContent = musicOn ? '🎵' : '🔇';
+      b.style.opacity = musicOn ? '1' : '.55';
+    }
+  }
+
+  function toggleMusic() {
+    musicOn = !musicOn;
+    lsSet(MUSIC_KEY, musicOn ? '1' : '0');
+    updateMusicBtn();
+    if (musicOn) {
+      if (currentScreen === 'table') musicStart();
+      else musicStart();
+    } else {
+      musicStop();
+    }
+    toast(musicOn ? '背景音乐已开启' : '背景音乐已关闭', 'ok');
+  }
+
+  // 调试/验收用：查看音乐状态（不影响功能）
+  window.__zjhMusic = function () {
+    return {
+      on: musicOn,
+      hasCtx: !!mCtx,
+      ctxState: mCtx ? mCtx.state : 'none',
+      scheduling: !!mTimer,
+      step: mStep
+    };
+  };
 
   function render(st) {
     var prevPhase = lastPhase;
@@ -3739,6 +3972,7 @@ var AVATARS = [
       if (ev.key === 'Enter') { ev.preventDefault(); doJoin(); }
     });
     $('btn-chat').addEventListener('click', openChatDialog);
+    $('btn-music').addEventListener('click', toggleMusic);
     $('btn-sound').addEventListener('click', function () {
       soundOn = !soundOn;
       try { lsSet('zjh.sound', soundOn ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -3806,7 +4040,12 @@ var AVATARS = [
     });
 
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible' && session && !connected) scheduleVerify(300);
+      if (document.visibilityState === 'visible') {
+        if (session && !connected) scheduleVerify(300);
+        if (session) musicStart();
+      } else {
+        musicStop();
+      }
     });
   }
 
@@ -3854,6 +4093,7 @@ var AVATARS = [
   function boot() {
     clearDeadBanner();
     restoreNickname();
+    updateMusicBtn();
     penaltyFactor = (function () {
       var f = Number(lsGet(FACTOR_KEY, '1'));
       return isFinite(f) && f >= 0 ? f : 1;
