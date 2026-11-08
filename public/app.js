@@ -2651,6 +2651,30 @@ var AVATARS = [
     return true;
   }
 
+  var srvPrefetched = {};
+
+  /** 预取服务器语音，让播报几乎即时（浏览器会缓存音频） */
+  function prefetchVoice(text) {
+    if (!useServerVoice()) return;
+    var key = String(text || '');
+    if (!key || srvPrefetched[key]) return;
+    srvPrefetched[key] = 1;
+    try {
+      fetch('/api/tts?text=' + encodeURIComponent(key), { cache: 'force-cache' }).catch(function () { /* ignore */ });
+    } catch (e) { /* ignore */ }
+  }
+
+  function prefetchRoomVoice(st) {
+    if (!useServerVoice() || !voiceOn) return;
+    var ps = (st && st.players) || [];
+    for (var i = 0; i < ps.length && i < 10; i++) {
+      var n = ps[i] && ps[i].name;
+      if (!n) continue;
+      prefetchVoice(n + ' 已看牌');
+      prefetchVoice(n + ' 已弃牌');
+    }
+  }
+
   function speechDrain() {
     if (speechSpeaking || !speechQueue.length || !voiceSupported()) return;
     var t = speechQueue.shift();
@@ -2814,6 +2838,7 @@ var AVATARS = [
     var phaseChanged = st.phase !== lastPhase;
     lastPhase = st.phase;
 
+    prefetchRoomVoice(st);
     renderHeader(st);
 
     $('panel-lobby').hidden = st.phase !== 'lobby';

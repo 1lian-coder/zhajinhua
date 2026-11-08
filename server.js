@@ -63,10 +63,11 @@ function json(res, code, obj) {
   res.end(body);
 }
 
-// ---------------------------------------------------- 服务器语音合成（兜底）
-// 浏览器没有 speechSynthesis 时，由服务器用 espeak-ng 合成中文 WAV 给网页播放。
-const TTS_CACHE = new Map();
-const TTS_CACHE_MAX = 200;
+// ------------------------------------------------ 服务器语音合成（荷官音色）
+// 优先用微软 Edge 神经语音（普通话女声，接近荷官播报），失败时回退 espeak-ng。
+const TTS_CACHE = new Map(); // text -> { buf, mime }
+const TTS_CACHE_MAX = 300;
+const TTS_VOICE = process.env.ZJH_TTS_VOICE || 'zh-CN-XiaoxiaoNeural';
 const ttsBuckets = new Map();
 
 function ttsAllow(ip) {
@@ -88,7 +89,54 @@ function sanitizeTtsText(raw) {
   return t;
 }
 
-function synthSpeech(text) {
+/** 微软 Edge 神经语音：更适合“荷官播报”，返回 mp3 */
+function synthEdge(text) {
+  return new Promise((resolve, reject) => {
+    const tmp = path.join(os.tmpdir(), 'zjh-edge-' + crypto.randomBytes(6).toString('hex') + '.mp3');
+    let child;
+    const cleanup = () => {
+      fs.unlink(tmp, () => { /* ignore */ });
+    };
+    try {
+      child = spawn('edge-tts', ['--voice', TTS_VOICE, '--rate=+12%', '--text', text, '--write-media', tmp], {
+        stdio: ['ignore', 'ignore', 'pipe']
+      });
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    let done = false;
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (err) {
+        cleanup();
+        reject(err);
+        return;
+      }
+      fs.readFile(tmp, (readErr, buf) => {
+        cleanup();
+        if (!readErr && buf && buf.length > 200) resolve({ buf, mime: 'audio/mpeg' });
+        else reject(new Error('edge 空音频'));
+      });
+    };
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch (e) { /* ignore */ }
+      finish(new Error('edge tts timeout'));
+    }, 15000);
+    child.on('error', (err) => finish(err));
+    child.on('close', (code) => {
+      if (code === 0) finish(null);
+      else finish(new Error('edge exit ' + code + (stderr ? ': ' + stderr.slice(0, 100) : '')));
+    });
+  });
+}
+
+/** espeak-ng 兜底：写临时 wav 再读 */
+function synthEspeak(text) {
   return new Promise((resolve, reject) => {
     const tmp = path.join(os.tmpdir(), 'zjh-tts-' + crypto.randomBytes(6).toString('hex') + '.wav');
     let child;
@@ -115,13 +163,13 @@ function synthSpeech(text) {
       }
       fs.readFile(tmp, (readErr, buf) => {
         cleanup();
-        if (readErr || !buf || !buf.length) reject(new Error('tts 空音频'));
-        else resolve(buf);
+        if (!readErr && buf && buf.length > 200) resolve({ buf, mime: 'audio/wav' });
+        else reject(new Error('espeak 空音频'));
       });
     };
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch (e) { /* ignore */ }
-      finish(new Error('tts timeout'));
+      finish(new Error('espeak tts timeout'));
     }, 8000);
     child.on('error', (err) => finish(err));
     child.on('close', (code) => {
@@ -134,13 +182,79 @@ function synthSpeech(text) {
     } catch (e) { /* ignore */ }
   });
 }
-function sendTts(res, buf) {
+
+/** 先 Edge 后 espeak；成功就进缓存 */
+async function synthSpeech(text) {
+  let edgeErr = null;
+  try {
+    return await synthEdge(text);
+  } catch (e) {
+    edgeErr = e;
+  }
+  try {
+    return await synthEspeak(text);
+  } catch (e2) {
+    const msg = (edgeErr && edgeErr.message ? edgeErr.message : 'edge失败') + ' / ' + (e2.message || 'espeak失败');
+    throw new Error(msg);
+  }
+}
+
+function cachePut(text, entry) {
+  if (TTS_CACHE.size >= TTS_CACHE_MAX) {
+    const first = TTS_CACHE.keys().next().value;
+    if (first !== undefined) TTS_CACHE.delete(first);
+  }
+  TTS_CACHE.set(text, entry);
+}
+
+/* ---- 预生成：玩家进房时热身“XX 已看牌/已弃牌”，让播报几乎即时 ---- */
+const prefetchQueue = [];
+let prefetchBusy = false;
+
+function prefetchTts(texts) {
+  for (const t of texts) {
+    const text = sanitizeTtsText(t);
+    if (!text || TTS_CACHE.has(text)) continue;
+    if (prefetchQueue.includes(text)) continue;
+    if (prefetchQueue.length >= 300) break;
+    prefetchQueue.push(text);
+  }
+  prefetchNext();
+}
+
+function prefetchNext() {
+  if (prefetchBusy || !prefetchQueue.length) return;
+  prefetchBusy = true;
+  const text = prefetchQueue.shift();
+  if (TTS_CACHE.has(text)) {
+    prefetchBusy = false;
+    setImmediate(prefetchNext);
+    return;
+  }
+  synthSpeech(text).then((entry) => {
+    cachePut(text, entry);
+    if (prefetchQueue.length || true) console.log('[tts] 预生成完成:', text);
+  }).catch((err) => {
+    console.error('[tts] 预生成失败:', text, err && err.message ? err.message : err);
+  }).finally(() => {
+    prefetchBusy = false;
+    setImmediate(prefetchNext);
+  });
+}
+
+function warmPlayerVoice(name) {
+  const n = sanitizeTtsText(name);
+  if (!n) return;
+  prefetchTts([n + ' 已看牌', n + ' 已弃牌', n + ' 已比牌']);
+}
+
+function sendTts(res, entry) {
   res.writeHead(200, {
-    'Content-Type': 'audio/wav',
-    'Content-Length': buf.length,
+    'Content-Type': entry.mime,
+    'Content-Length': entry.buf.length,
     'Cache-Control': 'public, max-age=86400'
   });
-  res.end(buf);
+  res.end(entry.buf);
 }
 
 async function handleTts(req, res, params) {
@@ -160,19 +274,14 @@ async function handleTts(req, res, params) {
     return;
   }
   try {
-    const buf = await synthSpeech(text);
-    if (TTS_CACHE.size >= TTS_CACHE_MAX) {
-      const first = TTS_CACHE.keys().next().value;
-      if (first !== undefined) TTS_CACHE.delete(first);
-    }
-    TTS_CACHE.set(text, buf);
-    sendTts(res, buf);
+    const entry = await synthSpeech(text);
+    cachePut(text, entry);
+    sendTts(res, entry);
   } catch (err) {
     console.error('[tts] 合成失败:', err && err.message ? err.message : err);
     json(res, 500, { ok: false, error: '语音合成失败' });
   }
 }
-
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -532,6 +641,7 @@ const api = {
     const player = room.addPlayer(name, { avatar: body.avatar, sitOut: !!body.sitOut });
     rooms.set(id, room);
     room.log(`房间 ${id} 已创建`);
+    warmPlayerVoice(player.name);
     markDirty();
     return { ok: true, roomId: id, playerId: player.id, token: player.token };
   },
@@ -553,6 +663,7 @@ const api = {
       }
     }
     const player = room.addPlayer(body.name, { avatar: body.avatar });
+    warmPlayerVoice(player.name);
     markDirty();
     broadcast(room);
     return { ok: true, roomId: room.id, playerId: player.id, token: player.token };
