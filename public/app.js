@@ -29,7 +29,6 @@ var AVATARS = [
 
   var CONFIG_FIELDS = [
     { key: 'ante', label: '底分（每人底注）', def: 10, min: 1, max: 10000, step: 1 },
-    { key: 'baseStake', label: '初始单注', def: 10, min: 1, max: 10000, step: 1 },
     { key: 'maxStake', label: '单注封顶', def: 100, min: 1, max: 100000, step: 1 },
     { key: 'maxPot', label: '总注封顶', def: 3000, min: 2, max: 10000000, step: 100 },
     { key: 'seeMultiplier', label: '看牌倍数', def: 2, min: 1, max: 4, step: 1 },
@@ -3470,8 +3469,24 @@ var AVATARS = [
     var bar = $('chip-bar');
     var row = $('chip-row');
     if (!bar || !row) return;
+    var ante = Number((st.config && st.config.ante) || 10);
+    var maxStake = Number((st.config && st.config.maxStake) || 100);
+    var stake = Number(st.stake || ante);
+    var seeMult = Number((st.config && st.config.seeMultiplier) || 2);
+    var me = findPlayer(st, meId());
+    var myChips = me ? me.chips : 0;
+    // 筹码档位按底分倍数：底分×2 / ×4 / ×8 / ×16（不超过单注封顶，且必须大于当前单注）
+    var levels = [];
+    var v = ante * 2;
+    for (var li = 0; li < 4; li++) {
+      if (v > stake && v <= maxStake) {
+        var cost = st.mySeen ? v * seeMult : v;
+        if (myChips >= cost) levels.push(v);
+      }
+      v *= 2;
+    }
     var show = st.phase === 'playing' && st.inHand && !st.folded &&
-      !st.allIn && (callOpt || raiseOpt);
+      !st.allIn && (callOpt || levels.length);
     if (!show) {
       bar.hidden = true;
       return;
@@ -3482,13 +3497,10 @@ var AVATARS = [
       html += '<button class="chip chip-call" type="button" data-chip="call">' +
         '<b>' + esc(callOpt.cost) + '</b><i>跟注</i></button>';
     }
-    if (raiseOpt && raiseOpt.raises) {
-      for (var i = 0; i < raiseOpt.raises.length; i++) {
-        var r = raiseOpt.raises[i];
-        html += '<button class="chip chip-raise' + (i > 0 ? ' chip-raise-2' : '') + '"' +
-          ' type="button" data-chip="raise" data-to="' + esc(r.to) + '">' +
-          '<b>' + esc(r.to) + '</b><i>加到</i></button>';
-      }
+    for (var lv = 0; lv < levels.length; lv++) {
+      html += '<button class="chip chip-raise' + (lv > 0 ? ' chip-raise-2' : '') + '"' +
+        ' type="button" data-chip="raise" data-to="' + esc(levels[lv]) + '">' +
+        '<b>' + esc(levels[lv]) + '</b><i>加到</i></button>';
     }
     row.innerHTML = html;
     var btns = row.querySelectorAll('[data-chip]');

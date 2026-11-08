@@ -1631,3 +1631,19 @@ test('看牌跟注递增翻倍：闷10 → 看20 → 看40 → 看80；关闭开
   room2.act(z, 'call');
   assert.strictEqual(room2.stake, s1, '关闭后单注不随看牌跟注增长');
 });
+
+test('单注从底分推导：底分 2 → 单注 2，可加注到 4/8/16/32', () => {
+  const room = newRoom(2, { ...QUIET, ante: 2, maxStake: 100, turnSeconds: 0, maxPot: 99999 });
+  assert.strictEqual(room.config.baseStake, 2, '初始单注 = 底分');
+  room.startHand(room.order[0]);
+  assert.strictEqual(room.stake, 2, '开局单注 = 底分 2');
+  const cur = room.turnId;
+  room.act(cur, 'raise', { to: 4 });
+  assert.strictEqual(room.stake, 4, '加到 4（底分×2）成功');
+  const cur2 = room.turnId;
+  room.act(cur2, 'raise', { to: 16 });
+  assert.strictEqual(room.stake, 16, '加到 16（底分×8）成功');
+  // 超过单注封顶被拒
+  const cur3 = room.turnId;
+  assert.throws(() => room.act(cur3, 'raise', { to: 200 }), /单注封顶/);
+});
