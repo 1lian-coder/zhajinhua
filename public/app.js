@@ -2591,7 +2591,9 @@ var AVATARS = [
       }
       configDirty = false;
       configSig = '';
-      toast('设置已保存', 'ok');
+      // 记住这套规则：下次建房自动带入
+      lsSet(CREATE_KEY, JSON.stringify(cfg));
+      toast('设置已保存（下次建房自动带入）', 'ok');
       if (state) render(state);
     });
   }
@@ -3616,6 +3618,22 @@ var AVATARS = [
       this.value = v;
       if (v) lsSet(NICK_KEY, v);
     });
+
+    // 边输入边记住昵称：下次打开网站自动填好
+    $('nickname').addEventListener('input', function () {
+      var v = String(this.value || '').replace(/\s+/g, ' ').replace(/^ | $/g, '').slice(0, 12);
+      if (v) lsSet(NICK_KEY, v);
+    });
+
+    // 建房高级设置：改了就记住，下次建房自动带入
+    var advForm = $('create-adv');
+    if (advForm) {
+      var saveAdv = function () {
+        try { lsSet(CREATE_KEY, JSON.stringify(readFormConfig(advForm))); } catch (e) { /* ignore */ }
+      };
+      advForm.addEventListener('input', saveAdv);
+      advForm.addEventListener('change', saveAdv);
+    }
 
     $('nickname').addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter' || ev.keyCode === 13) {
