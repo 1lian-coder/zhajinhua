@@ -987,7 +987,13 @@ var AVATARS = [
       if (src !== es) return;
       var reason = '';
       try { reason = (JSON.parse(ev.data) || {}).reason || ''; } catch (e) { reason = ''; }
-      handleSessionInvalid(reason ? '房间已关闭：' + reason : '房间已关闭');
+      var closedMsg = '房间已关闭';
+      if (reason && (reason.indexOf('没有人') >= 0 || reason.indexOf('解散') >= 0)) {
+        closedMsg = '房间已解散（长时间没人在线）。本局积分已记入「我的战绩」，下次打牌会继续累计';
+      } else if (reason) {
+        closedMsg = '房间已关闭：' + reason;
+      }
+      handleSessionInvalid(closedMsg);
     });
 
     src.onopen = function () {
@@ -1491,6 +1497,51 @@ var AVATARS = [
 
   var roomsTimer = null;
 
+  /** 我的战绩：累计积分 + 最近牌局（服务端持久化，房间解散也不丢） */
+  function openMyRecord() {
+    var name = String(nickname.value || lsGet(NICK_KEY, '') || '').trim();
+    if (!name) {
+      toast('先填一个昵称，才能查你的战绩', 'err');
+      return;
+    }
+    fetch('/api/history?name=' + encodeURIComponent(name) + '&limit=20', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res || !res.ok) { toast((res && res.error) || '读取战绩失败', 'err'); return; }
+        var cum = res.cumulative || {};
+        var html = '';
+        html += '<div class="pd-head">' + esc(name) + '</div>';
+        html += '<div class="pd-grid">';
+        html += '<span>累计积分</span><b class="' + (cum.net > 0 ? 'pd-pos' : (cum.net < 0 ? 'pd-neg' : '')) + '">' + esc(fmtSigned(cum.net || 0)) + '</b>';
+        html += '<span>总局数</span><b>' + esc(cum.hands || 0) + ' 局</b>';
+        html += '<span>胜局</span><b>' + esc(cum.wins || 0) + ' 胜</b>';
+        html += '<span>最好一局</span><b>' + esc(fmtSigned(cum.best || 0)) + '</b>';
+        html += '</div>';
+        var hands = res.hands || [];
+        if (!hands.length) {
+          html += '<p class="tips">还没有历史记录。打一局就会记下来。</p>';
+        } else {
+          html += '<div class="sec-title">最近 ' + hands.length + ' 局</div>';
+          html += '<div class="myrec-list">';
+          for (var i = 0; i < hands.length; i++) {
+            var h = hands[i];
+            var d = Number(h.delta) || 0;
+            var t = new Date(h.at || 0);
+            var stamp = (t.getMonth() + 1) + '月' + t.getDate() + '日 ' +
+              ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2);
+            html += '<div class="myrec-row">' +
+              '<span class="myrec-time">' + esc(stamp) + '</span>' +
+              '<span class="myrec-room">' + esc(h.roomId) + ' · 第' + esc(h.handNo || 0) + '局</span>' +
+              '<b class="myrec-delta ' + (d > 0 ? 'pos' : (d < 0 ? 'neg' : 'zero')) + '">' + esc(fmtSigned(d)) + '</b>' +
+              '</div>';
+          }
+          html += '</div>';
+        }
+        html += '<div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">关闭</button></div>';
+        showModal(html, { title: '我的战绩' });
+      })
+      .catch(function () { toast('连不上服务器', 'err'); });
+  }
   function loadRoomList() {
     var pin = readCreatePin();
     var box = $('rooms-list');
@@ -4615,6 +4666,7 @@ var AVATARS = [
     });
     $('btn-refresh-rooms').addEventListener('click', loadRoomList);
     $('btn-resume').addEventListener('click', doResume);
+    $('btn-myrecord').addEventListener('click', openMyRecord);
     $('btn-avatar').addEventListener('click', function () { openAvatarPicker(); });
 
     $('join-room').addEventListener('input', function () {

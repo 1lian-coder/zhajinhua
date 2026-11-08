@@ -3239,3 +3239,24 @@ input {
   line-height: 1.5;
   color: var(--muted, #9db3a8);
 }
+
+/* ==================== 我的战绩 ==================== */
+
+.myrec-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-height: 300px; overflow-y: auto; }
+
+.myrec-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .04);
+  font-size: 12px;
+}
+
+.myrec-time { color: var(--muted, #93a9a0); flex: 0 0 auto; }
+.myrec-room { flex: 1 1 auto; color: var(--text, #e8e4d8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.myrec-delta { flex: 0 0 auto; font-weight: 700; }
+.myrec-delta.pos { color: #7fe0a8; }
+.myrec-delta.neg { color: #ff8f86; }
+.myrec-delta.zero { color: var(--muted, #93a9a0); }

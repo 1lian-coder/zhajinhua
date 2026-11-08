@@ -29,12 +29,14 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'rooms.json');
+const PLAYERS_FILE = path.join(DATA_DIR, 'players.json'); // 按昵称累计积分
+const HISTORY_FILE = path.join(DATA_DIR, 'history.json'); // 历史牌局（最近 500 局）
 
 const MAX_BODY = 64 * 1024;
 const SSE_PING_MS = 20000;
 const TICK_MS = 1000;
 const IDLE_ROOM_MS = 2 * 60 * 60 * 1000; // 有连接但长时间无操作的兜底
-const NOBODY_GRACE_MS = Number(process.env.ZJH_IDLE_CLOSE_MS) || 2 * 60 * 1000; // 页面上没人后多久解散房间
+const NOBODY_GRACE_MS = Number(process.env.ZJH_IDLE_CLOSE_MS) || 10 * 60 * 1000; // 页面上没人后多久解散房间（10 分钟，避免切后台丢房间）
 const GC_INTERVAL_MS = Number(process.env.ZJH_GC_MS) || 10000;
 const SAVE_DEBOUNCE_MS = 2000;
 const RATE_WINDOW_MS = 3000;
@@ -375,6 +377,125 @@ function markDirty() {
 
 // ---------------------------------------------------------------- 落盘
 
+/* -------------------------------------------------- 战绩/积分持久化（按昵称） */
+
+let playerStats = {};   // name -> { net, hands, wins, best, updatedAt }
+let handHistory = [];   // 最近牌局 [{ at, roomId, handNo, reason, pot, players: [{name, delta, net}] }]
+let recordDirty = false;
+let recordSaveAt = 0;
+const RECORD_SAVE_MS = 1500;
+const HISTORY_MAX = 500;
+
+function loadRecords() {
+  try {
+    if (fs.existsSync(PLAYERS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(PLAYERS_FILE, 'utf8'));
+      if (raw && typeof raw === 'object') playerStats = raw;
+    }
+    if (fs.existsSync(HISTORY_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+      if (Array.isArray(raw)) handHistory = raw.slice(-HISTORY_MAX);
+    }
+    console.log('[load] 历史战绩 ' + Object.keys(playerStats).length + ' 人 / ' + handHistory.length + ' 局');
+  } catch (e) {
+    console.error('[load] 战绩读取失败:', e.message);
+  }
+}
+
+function saveRecords(force) {
+  const now = Date.now();
+  if (!force && !recordDirty) return;
+  if (!force && now - recordSaveAt < RECORD_SAVE_MS) return;
+  recordSaveAt = now;
+  recordDirty = false;
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp1 = PLAYERS_FILE + '.tmp';
+    fs.writeFileSync(tmp1, JSON.stringify(playerStats));
+    fs.renameSync(tmp1, PLAYERS_FILE);
+    const tmp2 = HISTORY_FILE + '.tmp';
+    fs.writeFileSync(tmp2, JSON.stringify(handHistory.slice(-HISTORY_MAX)));
+    fs.renameSync(tmp2, HISTORY_FILE);
+  } catch (e) {
+    console.error('[save] 战绩落盘失败:', e.message);
+  }
+}
+
+function ensureStat(name) {
+  const key = String(name || '').slice(0, 20);
+  if (!key) return null;
+  if (!playerStats[key]) playerStats[key] = { net: 0, hands: 0, wins: 0, best: 0, updatedAt: 0 };
+  return playerStats[key];
+}
+
+/** 一局结算后：累计到玩家档案 + 追加历史（同一局只记一次） */
+function maybeRecordHand(room) {
+  try {
+    if (!room || room.phase !== 'showdown' || !room.lastResult) return;
+    const r = room.lastResult;
+    const key = room.id + '#' + (r.handNo || 0) + '#' + (r.at || 0);
+    if (room._recordedKey === key) return;
+    room._recordedKey = key;
+    const deltas = r.deltas || [];
+    if (!deltas.length) return;
+    const at = Date.now();
+    const entry = {
+      at,
+      roomId: room.id,
+      handNo: r.handNo || room.handNo || 0,
+      reason: r.reason || '',
+      pot: r.pot != null ? r.pot : 0,
+      players: []
+    };
+    for (const d of deltas) {
+      const st = ensureStat(d.name);
+      if (st) {
+        st.net = (Number(st.net) || 0) + (Number(d.delta) || 0);
+        st.hands = (Number(st.hands) || 0) + 1;
+        if ((Number(d.delta) || 0) > 0) st.wins = (Number(st.wins) || 0) + 1;
+        if ((Number(d.delta) || 0) > (Number(st.best) || 0)) st.best = Number(d.delta) || 0;
+        st.updatedAt = at;
+      }
+      entry.players.push({ name: d.name, delta: d.delta, net: d.net });
+    }
+    handHistory.push(entry);
+    if (handHistory.length > HISTORY_MAX) handHistory = handHistory.slice(-HISTORY_MAX);
+    recordDirty = true;
+    saveRecords(false);
+  } catch (e) {
+    console.error('[record] 记录失败:', e.message);
+  }
+}
+
+/** 查询某人历史 */
+function getHistory(name, limit) {
+  const key = String(name || '').slice(0, 20);
+  const st = key && playerStats[key] ? playerStats[key] : null;
+  const lim = Math.max(1, Math.min(50, Number(limit) || 20));
+  const hands = [];
+  for (let i = handHistory.length - 1; i >= 0 && hands.length < lim; i--) {
+    const h = handHistory[i];
+    const mine = (h.players || []).find((p) => p.name === key);
+    if (!mine) continue;
+    hands.push({
+      at: h.at,
+      roomId: h.roomId,
+      handNo: h.handNo,
+      reason: h.reason,
+      pot: h.pot,
+      delta: mine.delta,
+      net: mine.net,
+      players: (h.players || []).map((p) => ({ name: p.name, delta: p.delta }))
+    });
+  }
+  return {
+    ok: true,
+    name: key,
+    cumulative: st ? { net: st.net, hands: st.hands, wins: st.wins, best: st.best, updatedAt: st.updatedAt } : { net: 0, hands: 0, wins: 0, best: 0, updatedAt: 0 },
+    hands
+  };
+}
+
 function saveState(force) {
   const now = Date.now();
   if (!force && (!dirty || now - lastSave < SAVE_DEBOUNCE_MS)) return;
@@ -420,6 +541,7 @@ function loadState() {
 
 function broadcast(room) {
   if (!room) return;
+  maybeRecordHand(room);
   markDirty();
   const byPlayer = streams.get(room.id);
   if (!byPlayer || byPlayer.size === 0) return;
@@ -1033,6 +1155,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 历史战绩（按昵称累计）
+    if (pathname === '/api/history') {
+      const q = url.searchParams;
+      const name = String(q.get('name') || '').trim();
+      if (!name) {
+        json(res, 400, { ok: false, error: '缺少昵称' });
+        return;
+      }
+      json(res, 200, getHistory(name, q.get('limit')));
+      return;
+    }
+
     if (pathname === '/api/events') {
       handleEvents(req, res, url.searchParams);
       return;
@@ -1166,6 +1300,7 @@ const gcTimer = setInterval(() => {
   }
   rateBuckets.clear();
   saveState(false);
+  saveRecords(false);
 }, GC_INTERVAL_MS);
 
 // ---------------------------------------------------------------- 进程兜底
@@ -1181,6 +1316,7 @@ function shutdown(signal) {
   console.log(`\n[shutdown] 收到 ${signal}，保存状态后退出`);
   try {
     saveState(true);
+    saveRecords(true);
   } catch (e) {
     /* ignore */
   }
@@ -1203,6 +1339,7 @@ server.on('clientError', (err, socket) => {
 });
 
 loadState();
+loadRecords();
 
 server.listen(PORT, HOST, () => {
   const pkg = (() => {
