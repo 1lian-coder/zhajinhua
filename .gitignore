@@ -13,3 +13,7 @@ tools/cloudflared.exe
 *.log
 .DS_Store
 Thumbs.db
+data/players.json
+data/players.json.tmp
+data/history.json
+data/history.json.tmp
