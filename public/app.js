@@ -40,6 +40,7 @@ var AVATARS = [
     { key: 'sessionHands', label: '每轮局数(0=不限)', def: 0, min: 0, max: 200, step: 1 },
     { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
+    { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -1312,6 +1313,24 @@ var AVATARS = [
     }, 2000);
   }
 
+  var showcaseTimer = null;
+
+  /** 每局结束：提示所有牌已亮出，牌桌停留展示一会儿 */
+  function showShowcaseBanner() {
+    var el = $('showcase-banner');
+    if (!el) return;
+    el.textContent = '本局结束 · 所有人的牌已亮出';
+    el.hidden = false;
+    el.className = 'showcase-banner';
+    void el.offsetWidth;
+    el.className = 'showcase-banner show';
+    if (showcaseTimer) clearTimeout(showcaseTimer);
+    showcaseTimer = setTimeout(function () {
+      el.className = 'showcase-banner';
+      showcaseTimer = setTimeout(function () { el.hidden = true; }, 320);
+    }, 3200);
+  }
+
   /* ------------------------------------------------- 桌面筹码与动作提示 */
 
   /** 每个下注 > 0 的玩家，在桌面上其座位与台心之间摆放筹码堆 */
@@ -2318,12 +2337,25 @@ var AVATARS = [
       }
     }
 
+    // 每局结束：亮牌提示 + 牌桌停留展示
+    if (st.phase === 'showdown' && prevPhase !== 'showdown') {
+      if (st.config && st.config.showAllAtEnd) showShowcaseBanner();
+    }
+
     if (phaseChanged) {
       try {
         if (st.phase === 'showdown') {
-          var resultPanel = $('panel-result');
-          if (resultPanel && resultPanel.scrollIntoView) {
-            resultPanel.scrollIntoView({ block: 'start' });
+          // 开启「每局结束亮出所有牌」时，停留在牌桌看大家亮牌；否则滚到结算面板
+          if (st.config && st.config.showAllAtEnd) {
+            var stage = $('table-stage');
+            if (stage && stage.scrollIntoView) {
+              try { stage.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { /* ignore */ }
+            }
+          } else {
+            var resultPanel = $('panel-result');
+            if (resultPanel && resultPanel.scrollIntoView) {
+              resultPanel.scrollIntoView({ block: 'start' });
+            }
           }
         } else {
           var main = $('table-main');
@@ -2540,6 +2572,16 @@ var AVATARS = [
         badges.appendChild(bi);
       }
       seat.appendChild(badges);
+
+      // 结算阶段：把每个人的牌亮在座位上（停留展示）
+      if (st.phase === 'showdown' && p.cards && p.cards.length === 3) {
+        var sc = document.createElement('div');
+        sc.className = 'seat-cards';
+        for (var ci = 0; ci < p.cards.length; ci++) {
+          sc.innerHTML += miniCardHtml(p.cards[ci]);
+        }
+        seat.appendChild(sc);
+      }
 
       // 点击座位：查看对方信息 / 借分
       (function (pid) {
@@ -2998,7 +3040,7 @@ var AVATARS = [
     }
 
     // ---- 弃牌获胜：赢家可选择公布牌面 ----
-    if (r.singleWin && meNow && winners[0] && winners[0].id === meNow.id) {
+    if (r.singleWin && meNow && winners[0] && winners[0].id === meNow.id && !(st.config && st.config.showAllAtEnd)) {
       if (st.revealWinner) {
         html += '<div class="reveal-choice done">✅ 你已公布牌面</div>';
       } else {

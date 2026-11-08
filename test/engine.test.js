@@ -454,8 +454,8 @@ test('开牌时公开所有参与者的牌（含已弃牌者），但开牌前�
   void c;
 });
 
-test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代劳', () => {
-  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代劳（关闭全亮模式）', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, showAllAtEnd: false });
   const [a, b, c] = room.order;
   room.startHand(a);
 
@@ -1520,4 +1520,37 @@ test('每局输赢 + 每轮总结：deltas 零和，roundSummary 累计，再来
   const r3 = room2.lastResult;
   assert.strictEqual(r3.sessionOver, undefined, '新房间重新开始计数');
   assert.ok(r3.deltas, '新房间每局输赢照常');
+});
+
+test('每局结束亮出所有牌：开启时弃牌获胜也全亮，关闭时只有赢家可选公布', () => {
+  // 开启（默认）：弃牌获胜也把所有在局玩家的牌亮给所有人
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, showAllAtEnd: true });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  room.turnId = b;
+  room.act(b, 'fold');
+  room.turnId = c;
+  room.act(c, 'fold');
+  assert.strictEqual(room.phase, 'showdown');
+  assert.strictEqual(room.lastResult.singleWin, true);
+  assert.ok(room.lastResult.showdown.length >= 2, '开启全亮时结算数据包含所有人的牌');
+  const v = room.serialize(b);
+  const visible = v.players.filter((p) => p.cards && p.cards.length === 3);
+  assert.strictEqual(visible.length, 3, '三个人（含弃牌者）的牌都可见');
+
+  // 关闭：默认不亮，只有赢家可选公布
+  const room2 = newRoom(3, { ...QUIET, turnSeconds: 0, showAllAtEnd: false });
+  const [x, y, z] = room2.order;
+  room2.startHand(x);
+  room2.turnId = y;
+  room2.act(y, 'fold');
+  room2.turnId = z;
+  room2.act(z, 'fold');
+  assert.strictEqual(room2.phase, 'showdown');
+  assert.strictEqual((room2.lastResult.showdown || []).length, 0, '关闭时结算数据不带牌');
+  const v2 = room2.serialize(y);
+  assert.strictEqual(v2.players.filter((p) => p.cards && p.cards.length === 3).length, 0, '关闭时看不到别人的牌');
+  room2.revealWin(x);
+  const v3 = room2.serialize(y);
+  assert.ok(v3.players.find((p) => p.id === x).cards, '关闭时赢家公布后才可见');
 });

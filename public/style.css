@@ -3137,3 +3137,48 @@ input {
 .voice-label { flex: 1 1 auto; line-height: 1.4; }
 
 .chat-bubble { cursor: pointer; }
+/* ==================== 每局结束亮牌 ==================== */
+
+.seat-cards {
+  display: flex;
+  gap: 1px;
+  margin-top: 2px;
+  padding: 1px 2px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .35);
+}
+
+.seat-cards .mini-card {
+  width: 20px;
+  height: 28px;
+  font-size: 9px;
+  border-radius: 3px;
+}
+
+.seats.mode-compact .seat-cards .mini-card { width: 17px; height: 24px; font-size: 8px; }
+.seats.mode-mini .seat-cards .mini-card { width: 15px; height: 21px; font-size: 7px; }
+
+.showcase-banner {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%) scale(.92);
+  z-index: 30;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffe9a8;
+  background: rgba(12, 30, 22, .95);
+  border: 1px solid rgba(232, 195, 122, .55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .55), 0 0 16px rgba(232, 195, 122, .25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+  white-space: nowrap;
+}
+
+.showcase-banner.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
