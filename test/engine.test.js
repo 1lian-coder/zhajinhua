@@ -1554,3 +1554,36 @@ test('每局结束亮出所有牌：开启时弃牌获胜也全亮，关闭时�
   const v3 = room2.serialize(y);
   assert.ok(v3.players.find((p) => p.id === x).cards, '关闭时赢家公布后才可见');
 });
+
+test('积分：新玩家从 0 开始；房主可重置所有人积分（局间）', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60 });
+  const [a, b] = room.order;
+  assert.strictEqual(room.players.get(a).net, 0, '新玩家积分从 0 开始');
+  assert.strictEqual(room.players.get(b).net, 0);
+
+  // 打一局：赢家正分、输家负分
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  room.turnId = a;
+  room.act(a, 'compare', { target: b });
+  assert.ok(room.players.get(a).net > 0, '赢家积分往上加');
+  assert.ok(room.players.get(b).net < 0, '输家积分是负数');
+
+  // 非房主不能重置
+  assert.throws(() => room.resetScores(b), /只有房主/);
+  // 牌局进行中不能重置（新开一局验证）
+  room.startHand(a);
+  assert.throws(() => room.resetScores(a), /牌局进行中不能重置/);
+  room.abortHand('测试');
+  // 房主重置：积分归 0、战绩清零、筹码恢复初始值
+  room.resetScores(a);
+  for (const p of room.players.values()) {
+    assert.strictEqual(p.net, 0, '重置后积分归 0');
+    assert.strictEqual(p.chips, room.config.initialChips, '筹码恢复初始值');
+  }
+  for (const s of Object.values(room.stats)) {
+    assert.strictEqual(s.hands, 0);
+    assert.strictEqual(s.wins, 0);
+  }
+});

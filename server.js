@@ -472,6 +472,15 @@ const api = {
     return { ok: true, sitOut: val };
   },
 
+  /** 房主重置所有人积分/战绩（局间） */
+  async resetScores(body) {
+    const { room, player } = authPlayer(body);
+    room.resetScores(player.id);
+    markDirty();
+    broadcast(room);
+    return { ok: true };
+  },
+
   /** 设置头像（表情，服务端白名单校验） */
   async avatar(body) {
     const { room, player } = authPlayer(body);

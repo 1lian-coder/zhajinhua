@@ -29,7 +29,6 @@ var AVATARS = [
 
   var CONFIG_FIELDS = [
     { key: 'ante', label: '底分（每人底注）', def: 10, min: 1, max: 10000, step: 1 },
-    { key: 'initialChips', label: '初始筹码（每人）', def: 1000, min: 10, max: 1000000, step: 10 },
     { key: 'baseStake', label: '初始单注', def: 10, min: 1, max: 10000, step: 1 },
     { key: 'maxStake', label: '单注封顶', def: 100, min: 1, max: 100000, step: 1 },
     { key: 'maxPot', label: '总注封顶', def: 3000, min: 2, max: 10000000, step: 100 },
@@ -1713,7 +1712,7 @@ var AVATARS = [
     html += '<div class="pd-grid">';
     html += '<span>筹码</span><b>' + esc(p.chips) + '</b>';
     html += '<span>本局下注</span><b>' + esc(p.bet || 0) + '</b>';
-    html += '<span>净分</span><b class="' + (p.net > 0 ? 'pd-pos' : (p.net < 0 ? 'pd-neg' : '')) + '">' + fmtSigned(p.net) + '</b>';
+    html += '<span>积分</span><b class="' + (p.net > 0 ? 'pd-pos' : (p.net < 0 ? 'pd-neg' : '')) + '">' + fmtSigned(p.net) + '</b>';
     html += '<span>战绩</span><b>' + esc(stat.hands) + ' 局 / ' + esc(stat.wins) + ' 胜 · 最大赢池 ' + esc(stat.best) + '</b>';
     html += '</div>';
 
@@ -2925,6 +2924,8 @@ var AVATARS = [
       buildConfigForm($('config-form'), cfg, !isHost || locked);
     }
     $('btn-save-config').hidden = !isHost || locked;
+    var resetBtn = $('btn-reset-scores');
+    if (resetBtn) resetBtn.hidden = !isHost;
     $('config-lock').textContent = locked
       ? '牌局已开始，设置已锁定'
       : (isHost ? '你是房主，可修改后保存' : '只有房主可修改，你可以先看看');
@@ -3063,6 +3064,12 @@ var AVATARS = [
         '</div></div>';
     }
 
+    // ---- 房主：重置所有人积分（从 0 开始）----
+    if (!r.sessionOver && st.hostId === meId() && !st.spectating) {
+      html += '<div class="auto-toggle"><span>积分想从 0 重新算？</span>' +
+        '<button id="btn-reset-scores-result" class="btn btn-ghost btn-small" type="button">重置所有人积分</button></div>';
+    }
+
     // ---- 自动连开开关（房主可见，让入口更显眼） ----
     if (!r.sessionOver && st.hostId === meId() && !st.spectating) {
       var autoOn = !!(st.config && st.config.autoNext);
@@ -3143,7 +3150,7 @@ var AVATARS = [
     for (var di = 0; di < dl.length; di++) deltaById[dl[di].id] = dl[di].delta;
     html += '<div class="sec-title">累计积分榜</div>';
     html += '<table class="rank-table"><thead><tr>' +
-      '<th></th><th>玩家</th><th>净分</th><th>本局</th><th>战绩</th><th>筹码</th></tr></thead><tbody>';
+      '<th></th><th>玩家</th><th>积分</th><th>本局</th><th>战绩</th></tr></thead><tbody>';
     for (var k = 0; k < sorted.length; k++) {
       var sp = sorted[k];
       var netCls = sp.net > 0 ? 'pos' : (sp.net < 0 ? 'neg' : 'zero');
@@ -3158,7 +3165,6 @@ var AVATARS = [
       html += '<td class="rank-net ' + netCls + '">' + esc(fmtSigned(sp.net)) + '</td>';
       html += '<td class="rank-delta ' + dltCls + '">' + (dlt == null ? '—' : esc(fmtSigned(dlt))) + '</td>';
       html += '<td class="rank-stats">' + esc(sttText) + '</td>';
-      html += '<td class="rank-chips">' + esc(sp.chips) + '</td>';
       html += '</tr>';
     }
     html += '</tbody></table>';
@@ -3168,7 +3174,7 @@ var AVATARS = [
     if (rs && rs.length) {
       html += '<div class="sec-title">本轮输赢总结</div>';
       html += '<table class="rank-table round-table"><thead><tr>' +
-        '<th></th><th>玩家</th><th>本轮输赢</th><th>净分</th><th>筹码</th></tr></thead><tbody>';
+        '<th></th><th>玩家</th><th>本轮输赢</th><th>积分</th></tr></thead><tbody>';
       for (var ri = 0; ri < rs.length; ri++) {
         var rp = rs[ri];
         var rCls = rp.delta > 0 ? 'pos' : (rp.delta < 0 ? 'neg' : 'zero');
@@ -3177,7 +3183,6 @@ var AVATARS = [
         html += '<td class="rank-name">' + esc(rp.name) + (rp.id === meId() ? '<i class="me-tag">我</i>' : '') + '</td>';
         html += '<td class="rank-net ' + rCls + '">' + esc(fmtSigned(rp.delta)) + '</td>';
         html += '<td class="rank-net ' + (rp.net > 0 ? 'pos' : (rp.net < 0 ? 'neg' : 'zero')) + '">' + esc(fmtSigned(rp.net)) + '</td>';
-        html += '<td class="rank-chips">' + esc(rp.chips) + '</td>';
         html += '</tr>';
       }
       html += '</tbody></table>';
@@ -3265,10 +3270,13 @@ var AVATARS = [
     if (finishBtn) {
       finishBtn.addEventListener('click', function () { doExit(); });
     }
+    var resetResultBtn = panel.querySelector('#btn-reset-scores-result');
+    if (resetResultBtn) {
+      resetResultBtn.addEventListener('click', function () { doResetScores(); });
+    }
 
     // 自动连开快捷开关
-    var toggleBtn = panel.querySelector('#btn-toggle-auto');
-    if (toggleBtn) {
+    var toggleBtn = panel.querySelector('#btn-toggle-auto');    if (toggleBtn) {
       toggleBtn.addEventListener('click', function () {
         toggleBtn.disabled = true;
         var cfg = {};
@@ -3903,6 +3911,28 @@ var AVATARS = [
     });
   }
 
+  function doResetScores() {
+    if (!session || busy) return;
+    confirmDialog({
+      title: '重置所有人积分',
+      message: '所有人积分归 0、战绩清零、筹码恢复初始值（牌局进行中不能重置）。确定吗？',
+      okText: '重置',
+      danger: true
+    }).then(function (ok) {
+      if (!ok) return;
+      busy = true;
+      api('/api/resetScores', {
+        roomId: session.roomId,
+        playerId: session.playerId,
+        token: session.token
+      }).then(function (res) {
+        busy = false;
+        if (!res || !res.ok) toast((res && res.error) || '重置失败', 'err');
+        else toast('积分已全部归 0', 'ok');
+      });
+    });
+  }
+
   function doStart() {
     if (!session || busy) return;
     // 本轮局数已打完：不能再开下一局，直接新开房间
@@ -4091,6 +4121,7 @@ var AVATARS = [
     $('btn-exit').addEventListener('click', doExit);
     $('btn-bottom').addEventListener('click', doStart);
     $('btn-save-config').addEventListener('click', saveConfig);
+    $('btn-reset-scores').addEventListener('click', doResetScores);
     $('btn-add-bot').addEventListener('click', doAddBot);
     $('btn-save-room-pin').addEventListener('click', saveRoomPin);
 
