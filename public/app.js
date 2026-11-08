@@ -1799,6 +1799,11 @@ var AVATARS = [
       if (m.seq > lastChatSeq) {
         lastChatSeq = m.seq;
         showChatBubble(m.id, m.text);
+        var who = null;
+        for (var k = 0; k < (st.players || []).length; k++) {
+          if (st.players[k].id === m.id) { who = st.players[k].name; break; }
+        }
+        speakChat(who || m.name, m.text, m.id === meId());
       }
     }
     if (st.chatSeq != null && st.chatSeq < lastChatSeq) lastChatSeq = st.chatSeq; // 重连后序列回卷
@@ -1815,6 +1820,10 @@ var AVATARS = [
     var b = document.createElement('div');
     b.className = 'chat-bubble';
     b.textContent = text;
+    b.title = '点一下再听一次';
+    b.addEventListener('click', function () {
+      speakText(text, true); // 手动点气泡：强制念一次（不受 900ms 限制）
+    });
     host.appendChild(b);
     // 强制重排后加动画类
     void b.offsetWidth;
@@ -1828,7 +1837,14 @@ var AVATARS = [
   }
 
   function openChatDialog() {
-    var html = '<div class="chat-quick">';
+    var html = '';
+    // 语音播报开关（程序自动念消息，不是录音）
+    html += '<div class="voice-row">' +
+      '<span class="voice-label">🔈 语音播报：程序自动念出聊天消息</span>' +
+      '<button id="chat-voice-toggle" class="btn btn-ghost btn-small" type="button">' +
+      (voiceOn ? '已开启' : '已关闭') + '</button>' +
+      '</div>';
+    html += '<div class="chat-quick">';
     for (var i = 0; i < CHAT_QUICK.length; i++) {
       html += '<button type="button" class="btn btn-ghost chat-q" data-t="' + esc(CHAT_QUICK[i]) + '">' + esc(CHAT_QUICK[i]) + '</button>';
     }
@@ -1839,6 +1855,21 @@ var AVATARS = [
       '</div>';
 
     var root = showModal(html, { title: '发言' });
+    var voiceBtn = root.querySelector('#chat-voice-toggle');
+    if (voiceBtn) {
+      voiceBtn.addEventListener('click', function () {
+        voiceOn = !voiceOn;
+        lsSet(VOICE_KEY, voiceOn ? '1' : '0');
+        voiceBtn.textContent = voiceOn ? '已开启' : '已关闭';
+        if (voiceOn) {
+          if (!voiceSupported()) { toast('这台设备的浏览器不支持语音朗读', 'err'); return; }
+          speakText('语音播报已开启', true);
+        } else {
+          try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+          toast('语音播报已关闭', 'ok');
+        }
+      });
+    }
     var input = root.querySelector('#chat-input');
     var send = function (text) {
       text = String(text || '').trim();
@@ -2177,6 +2208,72 @@ var AVATARS = [
       ctxState: mCtx ? mCtx.state : 'none',
       scheduling: !!mTimer,
       step: mStep
+    };
+  };
+
+  /* ------------------------------------------------ 聊天语音播报（程序 TTS） */
+
+  var VOICE_KEY = 'zjh.voice.v1';
+  var voiceOn = lsGet(VOICE_KEY, '1') !== '0';
+  var voiceLastAt = 0;
+  var voiceZh = null;
+  var voicePrimed = false;
+
+  function voicePick() {
+    try {
+      var vs = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+      for (var i = 0; i < vs.length; i++) {
+        if (/^zh/i.test(vs[i].lang || '')) return vs[i];
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function voiceSupported() {
+    return !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
+  }
+
+  /** 用系统 TTS 念一句话（程序音色，不是录音） */
+  function speakText(text, force) {
+    if (!voiceSupported()) return false;
+    if (!voiceOn && !force) return false;
+    if (typeof document !== 'undefined' && document.hidden) return false;
+    var t = String(text || '').trim();
+    if (!t) return false;
+    var now = Date.now();
+    if (!force && now - voiceLastAt < 900) return false; // 防刷屏
+    voiceLastAt = now;
+    try {
+      window.speechSynthesis.cancel();
+      var u = new window.SpeechSynthesisUtterance(t.slice(0, 40));
+      u.lang = 'zh-CN';
+      u.rate = 1.05;
+      u.pitch = 1.05;
+      u.volume = 0.95;
+      if (!voiceZh) voiceZh = voicePick();
+      if (voiceZh) u.voice = voiceZh;
+      window.speechSynthesis.speak(u);
+      window.__zjhVoice = { on: voiceOn, last: t, at: now, supported: true, voices: (window.speechSynthesis.getVoices() || []).length };
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function speakChat(name, text, isMe) {
+    if (!voiceOn) return;
+    var t = String(text || '').trim();
+    if (!t) return;
+    speakText(isMe ? t : (name ? name + '说：' + t : t));
+  }
+
+  window.__zjhVoiceState = function () {
+    return {
+      on: voiceOn,
+      supported: voiceSupported(),
+      voices: (window.speechSynthesis ? (window.speechSynthesis.getVoices() || []).length : 0),
+      last: (window.__zjhVoice || {}).last || '',
+      speaking: !!(window.speechSynthesis && window.speechSynthesis.speaking)
     };
   };
 
@@ -4045,8 +4142,22 @@ var AVATARS = [
         if (session) musicStart();
       } else {
         musicStop();
+        try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
       }
     });
+
+    // 第一次点击时预热语音合成（iOS 需要用户手势后才允许朗读）
+    document.addEventListener('click', function () {
+      if (!voiceOn || voicePrimed || !voiceSupported()) return;
+      voicePrimed = true;
+      try {
+        window.speechSynthesis.resume();
+        var u = new window.SpeechSynthesisUtterance(' ');
+        u.volume = 0.01;
+        u.lang = 'zh-CN';
+        window.speechSynthesis.speak(u);
+      } catch (e) { /* ignore */ }
+    }, { passive: true });
   }
 
   /* ------------------------------------------------------- 服务连通性 & 口令 */

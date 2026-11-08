@@ -3118,3 +3118,22 @@ input {
   color: var(--muted);
   margin: -4px 0 10px;
 }
+/* ==================== 聊天语音播报 ==================== */
+
+.voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 9px;
+  background: rgba(120, 190, 160, .07);
+  border: 1px dashed rgba(120, 190, 160, .3);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.voice-label { flex: 1 1 auto; line-height: 1.4; }
+
+.chat-bubble { cursor: pointer; }
