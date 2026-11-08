@@ -31,7 +31,9 @@ const STATE_FILE = path.join(DATA_DIR, 'rooms.json');
 const MAX_BODY = 64 * 1024;
 const SSE_PING_MS = 20000;
 const TICK_MS = 1000;
-const IDLE_ROOM_MS = 2 * 60 * 60 * 1000;
+const IDLE_ROOM_MS = 2 * 60 * 60 * 1000; // 有连接但长时间无操作的兜底
+const NOBODY_GRACE_MS = Number(process.env.ZJH_IDLE_CLOSE_MS) || 2 * 60 * 1000; // 页面上没人后多久解散房间
+const GC_INTERVAL_MS = Number(process.env.ZJH_GC_MS) || 10000;
 const SAVE_DEBOUNCE_MS = 2000;
 const RATE_WINDOW_MS = 3000;
 const RATE_MAX = 60;
@@ -166,7 +168,10 @@ function loadState() {
     for (const r of raw.rooms || []) {
       try {
         const room = Room.fromJSON(r);
-        if (room.players.size > 0) rooms.set(room.id, room);
+    if (room.players.size > 0) {
+      room.hadSSE = true; // 从磁盘恢复的房间：页面上没人就按宽限时间解散
+      rooms.set(room.id, room);
+    }
       } catch (e) {
         console.error('[load] 跳过损坏房间:', e.message);
       }
@@ -234,6 +239,14 @@ function unregisterStream(roomId, pid, res) {
 }
 
 // ---------------------------------------------------------------- 静态文件
+
+/** 页面上还有多少人（连接中的真人 + 观战者；人机不算） */
+function liveCount(room) {
+  let n = 0;
+  for (const p of room.players.values()) if (!p.isBot && p.connected) n++;
+  for (const s of room.spectators.values()) if (s.connected) n++;
+  return n;
+}
 
 /** 房间里还有几个真人（人机不算） */
 function humansIn(room) {
@@ -694,6 +707,7 @@ function handleEvents(req, res, query) {
     return;
   }
 
+  room.hadSSE = true;
   // 玩家或观战者都可能连 SSE：观战者不在 players 里
   const player = room.getPlayer(pid);
   const spectator = player ? null : room.spectators.get(pid);
@@ -888,6 +902,16 @@ const gcTimer = setInterval(() => {
         closeRoom(room, '没有真人，自动关闭');
         continue;
       }
+      // 页面上已经没有人（关掉网页/断线）：等一小会儿就解散
+      if (room.hadSSE && liveCount(room) === 0) {
+        if (!room._nobodySince) room._nobodySince = now;
+        else if (now - room._nobodySince >= NOBODY_GRACE_MS) {
+          closeRoom(room, '页面上没有人了，房间解散');
+          continue;
+        }
+      } else {
+        room._nobodySince = 0;
+      }
       const idle = room.connectedCount() === 0 && now - room.updatedAt > IDLE_ROOM_MS;
       if (idle) {
         closeRoom(room, '空闲超时');
@@ -898,7 +922,7 @@ const gcTimer = setInterval(() => {
   }
   rateBuckets.clear();
   saveState(false);
-}, 10000);
+}, GC_INTERVAL_MS);
 
 // ---------------------------------------------------------------- 进程兜底
 
