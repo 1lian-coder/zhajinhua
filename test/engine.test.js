@@ -1631,3 +1631,37 @@ test('单注从底分推导：底分 2 → 单注 2，可加注到 4/8/16/32', (
   const cur3 = room.turnId;
   assert.throws(() => room.act(cur3, 'raise', { to: 200 }), /单注封顶/);
 });
+
+test('固定 8 座位：新玩家坐空位，换座位改变出牌顺序，牌局中不能换', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0 });
+  const [a, b, c] = room.order;
+  assert.strictEqual(room.players.get(a).seat, 0);
+  assert.strictEqual(room.players.get(b).seat, 1);
+  assert.strictEqual(room.players.get(c).seat, 2);
+  // 序列化带座位表（8 个位置）
+  const sv0 = room.serialize(b);
+  assert.deepStrictEqual(sv0.seats.slice(0, 3), [a, b, c]);
+  assert.strictEqual(sv0.seats.length, 8);
+  assert.strictEqual(sv0.mySeat, 1);
+
+  // c 换到 5 号位：出牌顺序仍按座位（a0 b1 c5）
+  room.setSeat(c, 5);
+  assert.strictEqual(room.players.get(c).seat, 5);
+  assert.deepStrictEqual(room.order, [a, b, c]);
+
+  // a 换到 7 号位：顺序变成 b1 c5 a7
+  room.setSeat(a, 7);
+  assert.deepStrictEqual(room.order, [b, c, a]);
+  // 有人坐的座位不能再坐
+  assert.throws(() => room.setSeat(a, 1), /已经有人/);
+  // 非法座位号
+  assert.throws(() => room.setSeat(a, 8), /座位号无效/);
+
+  // 开局后不能换座位
+  room.startHand(room.order[0]);
+  assert.throws(() => room.setSeat(b, 3), /进行中不能换座位/);
+  room.abortHand('测试');
+  room.setSeat(b, 3);
+  assert.strictEqual(room.players.get(b).seat, 3);
+  assert.deepStrictEqual(room.order, [b, c, a]);
+});

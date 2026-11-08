@@ -3260,3 +3260,39 @@ input {
 .myrec-delta.pos { color: #7fe0a8; }
 .myrec-delta.neg { color: #ff8f86; }
 .myrec-delta.zero { color: var(--muted, #93a9a0); }
+
+/* ==================== 固定 8 座位 / 空位可点击 ==================== */
+
+.seat.empty {
+  border: 1px dashed rgba(232, 195, 122, .5);
+  background: rgba(0, 0, 0, .22);
+  color: var(--muted, #93a9a0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 62px;
+  padding: 4px 2px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+
+.seat.empty:hover,
+.seat.empty:active {
+  background: rgba(232, 195, 122, .12);
+  border-color: rgba(232, 195, 122, .9);
+}
+
+.seat-empty-plus { font-size: 18px; line-height: 1; color: #e8c37a; }
+.seat-empty-text { font-size: 10px; }
+.seat-empty-no { font-size: 9px; opacity: .65; }
+
+.seat-no {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 8px;
+  color: rgba(232, 195, 122, .75);
+  pointer-events: none;
+}

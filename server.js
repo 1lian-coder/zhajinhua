@@ -52,6 +52,7 @@ const rateBuckets = new Map();
 let dirty = false;
 let lastSave = 0;
 const startedAt = Date.now();
+const BUILD_VER = String(startedAt); // 静态资源缓存版本：每次重启/部署都会变
 
 // ---------------------------------------------------------------- 工具
 
@@ -669,6 +670,22 @@ function serveStatic(req, res, urlPath) {
 }
 
 function serveFile(file, res) {
+  if (path.basename(file) === 'index.html') {
+    fs.readFile(file, 'utf8', (err, html) => {
+      if (err) {
+        json(res, 404, { ok: false, error: '页面不存在' });
+        return;
+      }
+      const out = html.split('__VER__').join(BUILD_VER);
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Content-Length': Buffer.byteLength(out)
+      });
+      res.end(out);
+    });
+    return;
+  }
   fs.readFile(file, (err, buf) => {
     if (err) {
       json(res, 404, { ok: false, error: '页面不存在' });
@@ -847,6 +864,15 @@ const api = {
   async resetScores(body) {
     const { room, player } = authPlayer(body);
     room.resetScores(player.id);
+    markDirty();
+    broadcast(room);
+    return { ok: true };
+  },
+
+  /** 换座位（大厅/结算阶段；空位可坐，出牌顺序按座位） */
+  async setSeat(body) {
+    const { room, player } = authPlayer(body);
+    room.setSeat(player.id, body.seat);
     markDirty();
     broadcast(room);
     return { ok: true };

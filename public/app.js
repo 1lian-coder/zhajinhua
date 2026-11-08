@@ -3115,17 +3115,44 @@ var AVATARS = [
 
     var players = st.players || [];
     var mid = meId();
-    var opps = [];
-    for (var i = 0; i < players.length; i++) {
-      if (players[i].id !== mid) opps.push(players[i]);
-    }
+    var byId = {};
+    for (var i = 0; i < players.length; i++) byId[players[i].id] = players[i];
 
-    var n = opps.length;
+    var me = byId[mid] || null;
+    var seatArr = st.seats || [];
+    var isSpectating = !!st.spectating;
+    // 8 个固定座位：我在哪个座位，就从我的下一位开始顺时针排（把自己固定在底部）
+    var slots = [];
+    if (me && Number.isInteger(me.seat)) {
+      for (var off = 1; off < 8; off++) {
+        var si = (me.seat + off) % 8;
+        slots.push({ seat: si, pid: seatArr[si] || null });
+      }
+    } else {
+      for (var s = 0; s < 8; s++) slots.push({ seat: s, pid: seatArr[s] || null });
+    }
+    var n = slots.length;
     seatMode = seatModeFor(n);
     wrap.className = 'seats mode-' + seatMode;
 
     for (var k = 0; k < n; k++) {
-      var p = opps[k];
+      var entry = slots[k];
+      // 空座位：点击可以直接换过去
+      if (!entry.pid) {
+        var emptySeat = document.createElement('div');
+        emptySeat.className = 'seat empty';
+        emptySeat.setAttribute('data-seat', String(entry.seat));
+        emptySeat.innerHTML = '<div class="seat-empty-plus">+</div>' +
+          '<div class="seat-empty-text">空位</div>' +
+          '<div class="seat-empty-no">' + (entry.seat + 1) + '号</div>';
+        (function (seatNo) {
+          emptySeat.addEventListener('click', function () { tryMoveSeat(seatNo); });
+        })(entry.seat);
+        wrap.appendChild(emptySeat);
+        continue;
+      }
+      var p = byId[entry.pid];
+      if (!p) continue;
       var seat = document.createElement('div');
       var cls = 'seat';
       if (p.isTurn) { cls += ' turn'; turnSeatEl = seat; }
@@ -3137,6 +3164,13 @@ var AVATARS = [
       if (st.phase === 'bidding' && p.bid == null) cls += ' undecided';
       seat.className = cls;
       seat.setAttribute('data-pid', p.id);
+      seat.setAttribute('data-seat', String(entry.seat));
+
+      // 座位号（出牌顺序按座位号）
+      var noEl = document.createElement('div');
+      noEl.className = 'seat-no';
+      noEl.textContent = (entry.seat + 1) + '号';
+      seat.appendChild(noEl);
 
       // 头像圈（首字 + 纯 CSS 渐变），轮到时外面套一圈倒计时进度弧
       var av = document.createElement('div');
@@ -3160,7 +3194,7 @@ var AVATARS = [
       nameEl.textContent = p.name || '玩家';
       seat.appendChild(nameEl);
 
-      // 筹码 + 本局下注
+      // 积分 + 本局下注
       var nums = document.createElement('div');
       nums.className = 'seat-nums';
       var chipsEl = document.createElement('span');
@@ -3197,7 +3231,7 @@ var AVATARS = [
         seat.appendChild(sc);
       }
 
-      // 点击座位：查看对方信息 / 借分
+      // 点击座位：查看对方信息
       (function (pid) {
         seat.addEventListener('click', function () { openPlayerDetail(pid); });
       })(p.id);
@@ -3205,10 +3239,30 @@ var AVATARS = [
       wrap.appendChild(seat);
     }
 
-    // 立即测量并定位（座位数变化时尤其重要）
+    // 立即测量并定位
     layoutSeats();
   }
 
+  /** 点击空座位：坐过去（换座位会改变出牌顺序） */
+  function tryMoveSeat(seatNo) {
+    if (!session || !state || busy) return;
+    if (state.spectating) { toast('观战模式不能坐座位，先加入牌局', 'err'); return; }
+    if (state.phase !== 'lobby' && state.phase !== 'showdown') {
+      toast('牌局进行中不能换座位，等本局结束再换', 'err');
+      return;
+    }
+    busy = true;
+    api('/api/setSeat', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      seat: seatNo
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) toast((res && res.error) || '换座位失败', 'err');
+      else toast('已换到 ' + (seatNo + 1) + ' 号座位，出牌顺序已更新', 'ok');
+    });
+  }
   function renderMyArea(st) {
     var inLobby = st.phase === 'lobby';
     var me = findPlayer(st, meId());
@@ -3238,6 +3292,8 @@ var AVATARS = [
         myChipsEl.textContent = fmtSigned(me.net);
         myChipsEl.className = 'my-net ' + (me.net > 0 ? 'pos' : (me.net < 0 ? 'neg' : 'zero'));
       }
+      var seatNoEl = $('my-seatno');
+      if (seatNoEl) seatNoEl.textContent = Number.isInteger(me.seat) ? (me.seat + 1) + '号' : '-';
       $('my-bet').textContent = fmtChips(me.bet || 0);
       var myNet = $('my-net');
       myNet.textContent = fmtSigned(me.net);
