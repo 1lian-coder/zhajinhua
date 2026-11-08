@@ -3205,3 +3205,37 @@ input {
 
 .seats.mode-compact .seat { width: 64px; }
 .action-pop.pop-look { border-color: rgba(160, 210, 180, .7); color: #cfe8dc; background: rgba(12, 34, 26, .95); }
+
+/* ==================== 声音设置面板 ==================== */
+
+.sound-panel { display: flex; flex-direction: column; gap: 12px; }
+
+.sound-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text, #e8e4d8);
+}
+
+.vol-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  accent-color: #e8c37a;
+}
+
+.vol-val {
+  min-width: 46px;
+  text-align: right;
+  color: #e8c37a;
+  font-weight: 700;
+}
+
+.sound-tip {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted, #9db3a8);
+}

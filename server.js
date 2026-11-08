@@ -17,6 +17,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 const { Room, MAX_PLAYERS } = require('./lib/engine');
 
@@ -59,6 +60,110 @@ function json(res, code, obj) {
     'Content-Length': Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+// ---------------------------------------------------- 服务器语音合成（兜底）
+// 浏览器没有 speechSynthesis 时，由服务器用 espeak-ng 合成中文 WAV 给网页播放。
+const TTS_CACHE = new Map();
+const TTS_CACHE_MAX = 200;
+const ttsBuckets = new Map();
+
+function ttsAllow(ip) {
+  const now = Date.now();
+  const arr = (ttsBuckets.get(ip) || []).filter((t) => now - t < 60000);
+  if (arr.length >= 120) {
+    ttsBuckets.set(ip, arr);
+    return false;
+  }
+  arr.push(now);
+  ttsBuckets.set(ip, arr);
+  return true;
+}
+
+function sanitizeTtsText(raw) {
+  let t = String(raw || '');
+  t = t.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (t.length > 60) t = t.slice(0, 60);
+  return t;
+}
+
+function synthSpeech(text) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn('espeak-ng', ['-v', 'cmn', '-s', '150', '-p', '55', '-w', '-', '--stdin'], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const chunks = [];
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { child.kill('SIGKILL'); } catch (e) { /* ignore */ }
+      reject(new Error('tts timeout'));
+    }, 8000);
+    child.stdout.on('data', (d) => chunks.push(d));
+    child.on('error', (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (code === 0 && chunks.length) resolve(Buffer.concat(chunks));
+      else reject(new Error('espeak exit ' + code));
+    });
+    try {
+      child.stdin.write(text + '\n');
+      child.stdin.end();
+    } catch (e) { /* ignore */ }
+  });
+}
+
+function sendTts(res, buf) {
+  res.writeHead(200, {
+    'Content-Type': 'audio/wav',
+    'Content-Length': buf.length,
+    'Cache-Control': 'public, max-age=86400'
+  });
+  res.end(buf);
+}
+
+async function handleTts(req, res, params) {
+  const text = sanitizeTtsText(params.get('text'));
+  if (!text) {
+    json(res, 400, { ok: false, error: '缺少文字' });
+    return;
+  }
+  const cached = TTS_CACHE.get(text);
+  if (cached) {
+    sendTts(res, cached);
+    return;
+  }
+  const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
+  if (!ttsAllow(ip)) {
+    json(res, 429, { ok: false, error: '语音请求太频繁，稍后自动重试' });
+    return;
+  }
+  try {
+    const buf = await synthSpeech(text);
+    if (TTS_CACHE.size >= TTS_CACHE_MAX) {
+      const first = TTS_CACHE.keys().next().value;
+      if (first !== undefined) TTS_CACHE.delete(first);
+    }
+    TTS_CACHE.set(text, buf);
+    sendTts(res, buf);
+  } catch (err) {
+    console.error('[tts] 合成失败:', err && err.message ? err.message : err);
+    json(res, 500, { ok: false, error: '语音合成失败' });
+  }
 }
 
 function readBody(req) {
@@ -787,6 +892,12 @@ const server = http.createServer(async (req, res) => {
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         createPinRequired: !!loadSettings().createPin
       });      return;
+    }
+
+    // 服务器语音合成兜底（浏览器没有 TTS 时用）
+    if (pathname === '/api/tts') {
+      handleTts(req, res, url.searchParams);
+      return;
     }
 
     if (pathname === '/api/events') {

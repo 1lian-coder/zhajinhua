@@ -1895,7 +1895,8 @@ var AVATARS = [
     var html = '';
     // 语音播报开关（程序自动念消息，不是录音）
     html += '<div class="voice-row">' +
-      '<span class="voice-label">🔈 语音播报：程序自动念出聊天消息</span>' +
+      '<span class="voice-label">🔈 语音播报：程序念出聊天和看牌/押注</span>' +
+      '<button id="chat-voice-test" class="btn btn-ghost btn-small" type="button">测试</button>' +
       '<button id="chat-voice-toggle" class="btn btn-ghost btn-small" type="button">' +
       (voiceOn ? '已开启' : '已关闭') + '</button>' +
       '</div>';
@@ -1913,6 +1914,19 @@ var AVATARS = [
     var voiceBtn = root.querySelector('#chat-voice-toggle');
     if (voiceBtn) {
       voiceBtn.addEventListener('click', function () { toggleVoice(); });
+    }
+    var voiceTest = root.querySelector('#chat-voice-test');
+    if (voiceTest) {
+      voiceTest.addEventListener('click', function () {
+        if (useServerVoice()) {
+          srvUnlock();
+          srvSpeak('语音播报测试，一二三');
+          toast('已用服务器语音播放测试（浏览器不支持系统语音）', 'ok');
+          return;
+        }
+        speakText('语音播报测试，一二三', true);
+        toast('如果没听到声音，把手机音量调大，或换 Safari/Chrome 打开', 'ok');
+      });
     }
     var input = root.querySelector('#chat-input');
     var send = function (text) {
@@ -2228,8 +2242,15 @@ var AVATARS = [
     }
   }
 
-  var mMusicLevel = 0.1;
-
+  var MUSIC_VOL_KEY = 'zjh.vol.music.v1';
+  var musicVol = Number(lsGet(MUSIC_VOL_KEY, '70'));
+  if (!Number.isFinite(musicVol)) musicVol = 70;
+  musicVol = Math.max(0, Math.min(100, musicVol));
+  /** 音量百分比 → Web Audio 增益（0.3 为满档，避免削波） */
+  function musicGainForVol(v) {
+    return Math.max(0.0001, Math.min(0.45, (v / 100) * 0.3));
+  }
+  var mMusicLevel = musicGainForVol(musicVol);
   /** 语音播报时把背景音乐压低一点（继续播放，不中断） */
   function musicDuck(on) {
     if (!mCtx || !mGain || !musicOn) return;
@@ -2237,7 +2258,7 @@ var AVATARS = [
       var t = mCtx.currentTime;
       mGain.gain.cancelScheduledValues(t);
       mGain.gain.setValueAtTime(Math.max(0.0001, mGain.gain.value), t);
-      mGain.gain.linearRampToValueAtTime(on ? 0.035 : mMusicLevel, t + (on ? 0.15 : 0.6));
+      mGain.gain.linearRampToValueAtTime(on ? Math.max(0.0001, mMusicLevel * 0.35) : mMusicLevel, t + (on ? 0.15 : 0.6));
     } catch (e) { /* ignore */ }
   }
 
@@ -2280,6 +2301,73 @@ var AVATARS = [
         mGain.gain.setValueAtTime(mGain.gain.value, mCtx.currentTime);
         mGain.gain.linearRampToValueAtTime(0.0001, mCtx.currentTime + 0.5);
       } catch (e) { /* ignore */ }
+    }
+  }
+
+  /** 声音设置面板：背景音乐音量/开关、音效、语音播报 */
+  function openSoundPanel() {
+    var html = '';
+    html += '<div class="sound-panel">';
+    html += '<div class="sound-row"><span>背景音乐</span>' +
+      '<button id="sp-music-toggle" class="btn btn-ghost btn-small" type="button">' +
+      (musicOn ? '已开启' : '已关闭') + '</button></div>';
+    html += '<div class="sound-row"><span>音乐音量</span>' +
+      '<input id="sp-music-vol" class="vol-slider" type="range" min="0" max="100" step="5" value="' + musicVol + '">' +
+      '<b id="sp-music-vol-val" class="vol-val">' + musicVol + '%</b></div>';
+    html += '<div class="sound-row"><span>音效提醒</span>' +
+      '<button id="sp-sound-toggle" class="btn btn-ghost btn-small" type="button">' +
+      (soundOn ? '已开启' : '已关闭') + '</button></div>';
+    html += '<div class="sound-row"><span>语音播报</span>' +
+      '<button id="sp-voice-toggle" class="btn btn-ghost btn-small" type="button">' +
+      (voiceOn ? '已开启' : '已关闭') + '</button></div>';
+    html += '<p class="sound-tip">音效和语音播报是分开的：关掉音乐也能听播报</p>';
+    html += '</div>';
+    html += '<div class="modal-btns"><button type="button" class="btn btn-primary" data-close="1">完成</button></div>';
+    var root = showModal(html, { title: '声音设置' });
+    var musicBtn2 = root.querySelector('#sp-music-toggle');
+    if (musicBtn2) {
+      musicBtn2.addEventListener('click', function () {
+        toggleMusic();
+        musicBtn2.textContent = musicOn ? '已开启' : '已关闭';
+      });
+    }
+    var vol = root.querySelector('#sp-music-vol');
+    var volVal = root.querySelector('#sp-music-vol-val');
+    if (vol) {
+      var applyVol = function () {
+        musicVol = Math.max(0, Math.min(100, Number(vol.value) || 0));
+        lsSet(MUSIC_VOL_KEY, String(musicVol));
+        mMusicLevel = musicGainForVol(musicVol);
+        if (volVal) volVal.textContent = musicVol + '%';
+        if (mCtx && mGain && musicOn) {
+          try {
+            var t = mCtx.currentTime;
+            mGain.gain.cancelScheduledValues(t);
+            mGain.gain.setValueAtTime(Math.max(0.0001, mGain.gain.value), t);
+            mGain.gain.linearRampToValueAtTime(mMusicLevel, t + 0.2);
+          } catch (e) { /* ignore */ }
+        }
+        if (musicVol > 0 && musicOn) musicAutoStart();
+      };
+      vol.addEventListener('input', applyVol);
+      vol.addEventListener('change', applyVol);
+    }
+    var soundBtn2 = root.querySelector('#sp-sound-toggle');
+    if (soundBtn2) {
+      soundBtn2.addEventListener('click', function () {
+        soundOn = !soundOn;
+        try { lsSet('zjh.sound', soundOn ? '1' : '0'); } catch (e) { /* ignore */ }
+        updateSoundBtn();
+        soundBtn2.textContent = soundOn ? '已开启' : '已关闭';
+        if (soundOn) { primeAudio(); beep(); }
+      });
+    }
+    var voiceBtn2 = root.querySelector('#sp-voice-toggle');
+    if (voiceBtn2) {
+      voiceBtn2.addEventListener('click', function () {
+        toggleVoice();
+        voiceBtn2.textContent = voiceOn ? '已开启' : '已关闭';
+      });
     }
   }
 
@@ -2455,6 +2543,18 @@ var AVATARS = [
     return null;
   }
 
+  /** 不支持时的说明（微信/QQ 内置浏览器常见的阉割） */
+  function voiceUnsupportedMsg() {
+    var ua = String((navigator && navigator.userAgent) || '');
+    if (/MicroMessenger/i.test(ua)) {
+      return '微信内置浏览器不支持语音朗读：点右上角「…」→「在浏览器打开」，用 Safari/Chrome 就能听';
+    }
+    if (/QQ\//i.test(ua) || /QQLive/i.test(ua)) {
+      return 'QQ 内置浏览器不支持语音朗读：点右上角「…」→「用系统浏览器打开」';
+    }
+    return '这个浏览器不支持语音朗读：请换用 Safari（iPhone）/ Chrome（安卓）/ Edge 打开本页面';
+  }
+
   function voiceSupported() {
     return !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
   }
@@ -2465,6 +2565,91 @@ var AVATARS = [
   var speechSpeaking = false;
   var speechLog = [];
   var voiceBlockedNotified = false;
+
+  /* ---------------- 服务器语音兜底（浏览器没有 TTS 时用音频播放） ---------------- */
+
+  // 加 ?sv=1 可强制走服务器语音（测试用）
+  var forceServerVoice = /[?&]sv=1/.test(String((typeof location !== 'undefined' && location.search) || ''));
+  var srvQueue = [];
+  var srvPlaying = false;
+  var srvAudio = null;
+  var srvFailedNotified = false;
+  var srvUnlockTried = false;
+
+  function useServerVoice() {
+    return forceServerVoice || !voiceSupported();
+  }
+
+  function srvUnlock() {
+    if (srvUnlockTried) return;
+    srvUnlockTried = true;
+    try {
+      var a = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+      a.volume = 0.01;
+      var p = a.play();
+      if (p && p.catch) p.catch(function () { /* ignore */ });
+    } catch (e) { /* ignore */ }
+  }
+
+  function srvDrain() {
+    if (srvPlaying || !srvQueue.length || !voiceOn) return;
+    var t = srvQueue.shift();
+    try {
+      srvPlaying = true;
+      musicDuck(true);
+      var a = new Audio('/api/tts?text=' + encodeURIComponent(t));
+      a.preload = 'auto';
+      srvAudio = a;
+      a.onended = function () {
+        srvPlaying = false;
+        if (!srvQueue.length) musicDuck(false);
+        setTimeout(srvDrain, 30);
+      };
+      a.onerror = function () {
+        srvPlaying = false;
+        if (!srvQueue.length) musicDuck(false);
+        if (!srvFailedNotified) {
+          srvFailedNotified = true;
+          toast('服务器语音暂时不可用，稍后再试', 'err');
+        }
+        setTimeout(srvDrain, 30);
+      };
+      var pr = a.play();
+      if (pr && pr.catch) {
+        pr.catch(function () {
+          srvPlaying = false;
+          musicDuck(false);
+          if (!srvFailedNotified) {
+            srvFailedNotified = true;
+            toast('请先点一下页面，浏览器才允许播放声音', 'err');
+          }
+        });
+      }
+      window.__zjhVoice = { on: voiceOn, last: t, at: Date.now(), supported: false, mode: 'server' };
+      speechLog.push(t);
+      if (speechLog.length > 12) speechLog.shift();
+    } catch (e) {
+      srvPlaying = false;
+    }
+  }
+
+  /** 用服务器合成的语音念一句（排队） */
+  function srvSpeak(text, cut) {
+    if (!voiceOn) return false;
+    var t = String(text || '').trim();
+    if (!t) return false;
+    if (cut) {
+      srvQueue = [];
+      try {
+        if (srvAudio) { srvAudio.pause(); srvAudio = null; }
+      } catch (e) { /* ignore */ }
+      srvPlaying = false;
+    }
+    if (srvQueue.length >= 4) srvQueue.shift();
+    srvQueue.push(t.slice(0, 60));
+    srvDrain();
+    return true;
+  }
 
   function speechDrain() {
     if (speechSpeaking || !speechQueue.length || !voiceSupported()) return;
@@ -2512,10 +2697,11 @@ var AVATARS = [
 
   /** 排队念一句（游戏动作公告用） */
   function speakQueued(text) {
-    if (!voiceOn || !voiceSupported()) return false;
+    if (!voiceOn) return false;
     if (typeof document !== 'undefined' && document.hidden) return false;
     var t = String(text || '').trim();
     if (!t) return false;
+    if (useServerVoice()) return srvSpeak(t);
     if (speechQueue.length >= 5) speechQueue.shift(); // 丢弃最旧的，避免积压
     speechQueue.push(t.slice(0, 40));
     speechDrain();
@@ -2523,11 +2709,11 @@ var AVATARS = [
   }
 
   function speakText(text, force) {
-    if (!voiceSupported()) return false;
     if (!voiceOn && !force) return false;
     if (typeof document !== 'undefined' && document.hidden) return false;
     var t = String(text || '').trim();
     if (!t) return false;
+    if (useServerVoice()) return srvSpeak(t, !!force);
     if (force) {
       // 点气泡重听：立刻打断当前朗读
       try {
@@ -2570,8 +2756,10 @@ var AVATARS = [
     var chatBtn = document.getElementById('chat-voice-toggle');
     if (chatBtn) chatBtn.textContent = voiceOn ? '已开启' : '已关闭';
     if (voiceOn) {
-      if (!voiceSupported()) {
-        toast('这台设备的浏览器不支持语音播报，可以试试点「在浏览器打开」', 'err');
+      if (useServerVoice()) {
+        srvUnlock();
+        srvSpeak('语音播报已开启');
+        toast('已使用服务器语音播报（这个浏览器不支持系统语音）', 'ok');
         return;
       }
       speakText('语音播报已开启', true);
@@ -2588,8 +2776,10 @@ var AVATARS = [
     voiceNoticeShown = true;
     setTimeout(function () {
       if (!voiceOn) return;
-      if (!voiceSupported()) {
-        toast('当前浏览器不支持语音播报；想听播报请点右上角「在浏览器打开」', 'err');
+      if (useServerVoice()) {
+        srvUnlock();
+        srvSpeak('语音播报已开启');
+        if (!forceServerVoice) toast('这个浏览器不支持系统语音，已自动切换服务器语音播报', 'ok');
         return;
       }
       var voices = [];
@@ -4470,7 +4660,7 @@ var AVATARS = [
       if (ev.key === 'Enter') { ev.preventDefault(); doJoin(); }
     });
     $('btn-chat').addEventListener('click', openChatDialog);
-    $('btn-music').addEventListener('click', toggleMusic);
+    $('btn-music').addEventListener('click', openSoundPanel);
     $('btn-sound').addEventListener('click', function () {
       soundOn = !soundOn;
       try { lsSet('zjh.sound', soundOn ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -4565,6 +4755,7 @@ var AVATARS = [
     // 触摸也解锁语音（iOS 微信/浏览器），并确保背景音乐开始播放
     document.addEventListener('touchstart', function () {
       musicAutoStart();
+      srvUnlock();
       if (!voiceSupported()) return;
       try {
         window.speechSynthesis.resume();
@@ -4577,7 +4768,7 @@ var AVATARS = [
         }
       } catch (e) { /* ignore */ }
     }, { passive: true });
-    document.addEventListener('click', function () { musicAutoStart(); }, { passive: true });
+    document.addEventListener('click', function () { musicAutoStart(); srvUnlock(); }, { passive: true });
 
     // 按钮点击音效（欢乐斗地主风格），同时预热音效上下文
     document.addEventListener('click', function (ev) {
