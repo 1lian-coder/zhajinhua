@@ -3204,3 +3204,4 @@ input {
 }
 
 .seats.mode-compact .seat { width: 64px; }
+.action-pop.pop-look { border-color: rgba(160, 210, 180, .7); color: #cfe8dc; background: rgba(12, 34, 26, .95); }

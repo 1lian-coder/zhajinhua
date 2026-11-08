@@ -40,7 +40,6 @@ var AVATARS = [
     { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
-    { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
     { key: 'autoNextSeconds', label: '自动开局等待(秒)', def: 8, min: 3, max: 120, step: 1 }
   ];
@@ -1423,13 +1422,48 @@ var AVATARS = [
       if (!L || L.t <= lastActionT) continue;
       if (L.t > maxT) maxT = L.t;
       var text = String(L.text || '');
-      var m, pid = null, cls = '', label = '';
-      if ((m = text.match(/^(.{1,12}?) 跟注 (\d+)/))) { pid = pidByName(st, m[1]); cls = 'pop-call'; label = '跟注 ' + m[2]; }
-      else if ((m = text.match(/^(.{1,12}?) 加注到 (\d+)/))) { pid = pidByName(st, m[1]); cls = 'pop-raise'; label = '加注到 ' + m[2]; }
-      else if ((m = text.match(/^(.{1,12}?) 孤注一掷/))) { pid = pidByName(st, m[1]); cls = 'pop-allin'; label = '孤注一掷'; }
-      else if ((m = text.match(/^(.{1,12}?) 约 .+? 比牌/))) { pid = pidByName(st, m[1]); cls = 'pop-compare'; label = '比牌'; }
-      else if ((m = text.match(/^(.{1,12}?) 超时/))) { pid = pidByName(st, m[1]); cls = 'pop-timeout'; label = '超时弃牌'; }
-      else if ((m = text.match(/^(.{1,12}?) 弃牌/))) { pid = pidByName(st, m[1]); cls = 'pop-fold'; label = '弃牌'; }
+      var m, pid = null, cls = '', label = '', say = '';
+      if ((m = text.match(/^(.{1,12}?) 看牌了/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-look';
+        label = '看牌';
+        say = m[1] + ' 已看牌';
+      } else if ((m = text.match(/^(.{1,12}?) 跟注 (\d+)/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-call';
+        label = '跟注 ' + m[2];
+        say = m[1] + ' 押注 ' + m[2];
+      } else if ((m = text.match(/^(.{1,12}?) 加注到 (\d+)（下注 (\d+)）/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-raise';
+        label = '加注到 ' + m[2];
+        say = m[1] + ' 押注 ' + m[3];
+      } else if ((m = text.match(/^(.{1,12}?) 加注到 (\d+)/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-raise';
+        label = '加注到 ' + m[2];
+        say = m[1] + ' 押注 ' + m[2];
+      } else if ((m = text.match(/^(.{1,12}?) 孤注一掷/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-allin';
+        label = '孤注一掷';
+        say = m[1] + ' 全下';
+      } else if ((m = text.match(/^(.{1,12}?) 约 .+? 比牌/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-compare';
+        label = '比牌';
+        say = m[1] + ' 比牌';
+      } else if ((m = text.match(/^(.{1,12}?) 超时/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-timeout';
+        label = '超时弃牌';
+        say = m[1] + ' 超时弃牌';
+      } else if ((m = text.match(/^(.{1,12}?) 弃牌/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-fold';
+        label = '弃牌';
+        say = m[1] + ' 弃牌';
+      }
       if (pid && label) {
         popActionBubble(pid, cls, label);
         // 欢乐斗地主风格音效
@@ -1437,7 +1471,10 @@ var AVATARS = [
         else if (cls === 'pop-raise' || cls === 'pop-allin') sfx('raise');
         else if (cls === 'pop-fold' || cls === 'pop-timeout') sfx('fold');
         else if (cls === 'pop-compare') sfx('compare');
+        else if (cls === 'pop-look') sfx('click');
       }
+      // 语音播报：XX 已看牌 / XX 押注 20 / XX 弃牌…
+      if (say) speakQueued(say);
     }
     lastActionT = maxT;
   }
@@ -1716,20 +1753,12 @@ var AVATARS = [
 
     var html = '<div class="pd-head">' + esc(p.name) + '</div>';
     html += '<div class="pd-grid">';
-    html += '<span>筹码</span><b>' + esc(p.chips) + '</b>';
-    html += '<span>本局下注</span><b>' + esc(p.bet || 0) + '</b>';
     html += '<span>积分</span><b class="' + (p.net > 0 ? 'pd-pos' : (p.net < 0 ? 'pd-neg' : '')) + '">' + fmtSigned(p.net) + '</b>';
+    html += '<span>本局下注</span><b>' + esc(p.bet || 0) + '</b>';
     html += '<span>战绩</span><b>' + esc(stat.hands) + ' 局 / ' + esc(stat.wins) + ' 胜 · 最大赢池 ' + esc(stat.best) + '</b>';
     html += '</div>';
 
-    if (!isSelf) {
-      if (p.chips < ante && myChips >= 50) {
-        html += '<button class="btn btn-primary" id="pd-lend" type="button">借给他分（帮他补筹码）</button>';
-      }
-      if (myChips < ante && p.chips >= 50) {
-        html += '<button class="btn btn-primary" id="pd-borrow" type="button">向他借分</button>';
-      }
-    } else {
+    if (isSelf) {
       html += '<button class="btn btn-ghost" id="pd-avatar" type="button">换头像</button>';
     }
     html += '<div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">关闭</button></div>';
@@ -2383,30 +2412,82 @@ var AVATARS = [
   }
 
   /** 用系统 TTS 念一句话（程序音色，不是录音） */
+  /* 语音队列：多人连续操作时排队播报，不互相打断 */
+  var speechQueue = [];
+  var speechSpeaking = false;
+  var speechLog = [];
+
+  function speechDrain() {
+    if (speechSpeaking || !speechQueue.length || !voiceSupported()) return;
+    var t = speechQueue.shift();
+    try {
+      speechSpeaking = true;
+      var u = new window.SpeechSynthesisUtterance(t);
+      u.lang = 'zh-CN';
+      u.rate = 1.12;
+      u.pitch = 1.05;
+      u.volume = 0.95;
+      if (!voiceZh) voiceZh = voicePick();
+      if (voiceZh) u.voice = voiceZh;
+      u.onend = function () { speechSpeaking = false; setTimeout(speechDrain, 40); };
+      u.onerror = function () { speechSpeaking = false; setTimeout(speechDrain, 40); };
+      window.speechSynthesis.speak(u);
+      window.__zjhVoice = {
+        on: voiceOn,
+        last: t,
+        at: Date.now(),
+        supported: true,
+        voices: (window.speechSynthesis.getVoices() || []).length
+      };
+      speechLog.push(t);
+      if (speechLog.length > 12) speechLog.shift();
+    } catch (e) {
+      speechSpeaking = false;
+    }
+  }
+
+  /** 排队念一句（游戏动作公告用） */
+  function speakQueued(text) {
+    if (!voiceOn || !voiceSupported()) return false;
+    if (typeof document !== 'undefined' && document.hidden) return false;
+    var t = String(text || '').trim();
+    if (!t) return false;
+    if (speechQueue.length >= 5) speechQueue.shift(); // 丢弃最旧的，避免积压
+    speechQueue.push(t.slice(0, 40));
+    speechDrain();
+    return true;
+  }
+
   function speakText(text, force) {
     if (!voiceSupported()) return false;
     if (!voiceOn && !force) return false;
     if (typeof document !== 'undefined' && document.hidden) return false;
     var t = String(text || '').trim();
     if (!t) return false;
-    var now = Date.now();
-    if (!force && now - voiceLastAt < 900) return false; // 防刷屏
-    voiceLastAt = now;
-    try {
-      window.speechSynthesis.cancel();
-      var u = new window.SpeechSynthesisUtterance(t.slice(0, 40));
-      u.lang = 'zh-CN';
-      u.rate = 1.05;
-      u.pitch = 1.05;
-      u.volume = 0.95;
-      if (!voiceZh) voiceZh = voicePick();
-      if (voiceZh) u.voice = voiceZh;
-      window.speechSynthesis.speak(u);
-      window.__zjhVoice = { on: voiceOn, last: t, at: now, supported: true, voices: (window.speechSynthesis.getVoices() || []).length };
-      return true;
-    } catch (e) {
-      return false;
+    if (force) {
+      // 点气泡重听：立刻打断当前朗读
+      try {
+        window.speechSynthesis.cancel();
+        speechSpeaking = false;
+        speechQueue = [];
+      } catch (e) { /* ignore */ }
+      voiceLastAt = Date.now();
+      try {
+        var u = new window.SpeechSynthesisUtterance(t.slice(0, 40));
+        u.lang = 'zh-CN';
+        u.rate = 1.12;
+        u.pitch = 1.05;
+        u.volume = 0.95;
+        if (!voiceZh) voiceZh = voicePick();
+        if (voiceZh) u.voice = voiceZh;
+        window.speechSynthesis.speak(u);
+        window.__zjhVoice = { on: voiceOn, last: t, at: Date.now(), supported: true, voices: (window.speechSynthesis.getVoices() || []).length };
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
+    return speakQueued(t);
   }
 
   function speakChat(name, text, isMe) {
@@ -2422,6 +2503,7 @@ var AVATARS = [
       supported: voiceSupported(),
       voices: (window.speechSynthesis ? (window.speechSynthesis.getVoices() || []).length : 0),
       last: (window.__zjhVoice || {}).last || '',
+      log: speechLog.slice(-10),
       speaking: !!(window.speechSynthesis && window.speechSynthesis.speaking)
     };
   };
@@ -2689,8 +2771,8 @@ var AVATARS = [
       var nums = document.createElement('div');
       nums.className = 'seat-nums';
       var chipsEl = document.createElement('span');
-      chipsEl.className = 'chips';
-      chipsEl.textContent = fmtChips(p.chips);
+      chipsEl.className = 'chips net ' + (p.net > 0 ? 'pos' : (p.net < 0 ? 'neg' : ''));
+      chipsEl.textContent = fmtSigned(p.net);
       nums.appendChild(chipsEl);
       if (st.phase !== 'lobby') {
         var betEl = document.createElement('span');
@@ -2758,7 +2840,11 @@ var AVATARS = [
     if (me) {
       $('my-name').textContent = me.name || '我';
       paintAvatar($('my-avatar-face'), st.myAvatar, me.name, me.id);
-      $('my-chips').textContent = fmtChips(me.chips);
+      var myChipsEl = $('my-chips');
+      if (myChipsEl) {
+        myChipsEl.textContent = fmtSigned(me.net);
+        myChipsEl.className = 'my-net ' + (me.net > 0 ? 'pos' : (me.net < 0 ? 'neg' : 'zero'));
+      }
       $('my-bet').textContent = fmtChips(me.bet || 0);
       var myNet = $('my-net');
       myNet.textContent = fmtSigned(me.net);
@@ -3950,7 +4036,7 @@ var AVATARS = [
     if (!opt) { toast('现在不能孤注一掷', 'err'); return; }
     confirmDialog({
       title: '孤注一掷',
-      message: '把剩下的 ' + opt.cost + ' 筹码全部押上，留在牌局里直到开牌。确定吗？',
+      message: '把剩下的 ' + opt.cost + ' 分全部押上，留在牌局里直到开牌。确定吗？',
       okText: '全下'
     }).then(function (ok) {
       if (ok) postAction('allin', {});
@@ -4020,7 +4106,7 @@ var AVATARS = [
           if (!target) return;
           confirmDialog({
             title: '确认比牌',
-            message: '与 ' + target.name + ' 比牌，需下注 ' + cost + ' 筹码，输的人直接出局。确定吗？',
+            message: '与 ' + target.name + ' 比牌，需下注 ' + cost + ' 分，输的人直接出局。确定吗？',
             okText: '比牌',
             danger: true
           }).then(function (ok) {
@@ -4046,7 +4132,7 @@ var AVATARS = [
     if (!session || busy) return;
     confirmDialog({
       title: '重置所有人积分',
-      message: '所有人积分归 0、战绩清零、筹码恢复初始值（牌局进行中不能重置）。确定吗？',
+      message: '所有人积分归 0、战绩清零（牌局进行中不能重置）。确定吗？',
       okText: '重置',
       danger: true
     }).then(function (ok) {
