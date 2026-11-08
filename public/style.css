@@ -3182,3 +3182,25 @@ input {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
 }
+/* ==================== 8 人上限：桌子放大 ==================== */
+
+.table-stage {
+  height: clamp(440px, 62vh, 660px);
+}
+
+.table-oval {
+  width: 78%;
+  height: 96%;
+  max-width: 340px;
+}
+
+.table-center {
+  width: 82%;
+}
+
+/* 8 人以内座位用大档（对面最多 7 个，左右各 3~4 个） */
+.seat {
+  width: 72px;
+}
+
+.seats.mode-compact .seat { width: 64px; }

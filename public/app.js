@@ -1511,7 +1511,7 @@ var AVATARS = [
     var meta = document.createElement('span');
     meta.className = 'room-meta';
     var phaseText = r.phase === 'bidding' ? '抢庄中' : (r.phase === 'playing' ? '进行中' : (r.phase === 'showdown' ? '结算中' : '大厅'));
-    meta.textContent = r.players + '/' + (r.maxPlayers || 15) + '人 · ' + phaseText +
+    meta.textContent = r.players + '/' + (r.maxPlayers || 8) + '人 · ' + phaseText +
       (r.phase !== 'lobby' ? ' · 第' + r.handNo + '局 · 底池' + r.pot : '') +
       (r.hasJoinPin ? ' · 有密码' : '');
     info.appendChild(meta);
@@ -2370,7 +2370,7 @@ var AVATARS = [
     var players = st.players || [];
     var online = 0;
     for (var i = 0; i < players.length; i++) if (players[i].connected) online++;
-    var maxPlayers = st.maxPlayers || 15;
+    var maxPlayers = st.maxPlayers || 8;
 
     $('room-id').textContent = st.roomId || (session && session.roomId) || '------';
     $('online-text').textContent = online + '/' + maxPlayers + ' 在线';
@@ -2824,9 +2824,9 @@ var AVATARS = [
     if (sig === botsSig) {
       // 只更新按钮可用态
       var addBtn = $('btn-add-bot');
-      if (addBtn) addBtn.disabled = !isHost || players.length >= (st.maxPlayers || 15) || busy;
+      if (addBtn) addBtn.disabled = !isHost || players.length >= (st.maxPlayers || 8) || busy;
       var cnt = $('bots-count');
-      if (cnt) cnt.textContent = players.length + '/' + (st.maxPlayers || 15) + ' 个座位';
+      if (cnt) cnt.textContent = players.length + '/' + (st.maxPlayers || 8) + ' 个座位';
       return;
     }
     botsSig = sig;
@@ -2865,11 +2865,11 @@ var AVATARS = [
 
     var addBtn2 = $('btn-add-bot');
     if (addBtn2) {
-      addBtn2.disabled = !isHost || players.length >= (st.maxPlayers || 15);
+      addBtn2.disabled = !isHost || players.length >= (st.maxPlayers || 8);
       addBtn2.textContent = isHost ? '+ 添加人机' : '只有房主能添加人机';
     }
     var cnt2 = $('bots-count');
-    if (cnt2) cnt2.textContent = players.length + '/' + (st.maxPlayers || 15) + ' 个座位';
+    if (cnt2) cnt2.textContent = players.length + '/' + (st.maxPlayers || 8) + ' 个座位';
     var hint = $('bots-hint');
     if (hint) {
       hint.textContent = humans <= 1 ? '一个人也能玩：加人机开局吧' : '人机会自动出牌，适合凑人数';

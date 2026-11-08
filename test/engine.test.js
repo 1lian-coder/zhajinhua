@@ -151,16 +151,16 @@ test('牌面 label 正确', () => {
 
 // ---------------------------------------------------------------- 房间规则
 
-test('房间人数上限 15 人，第 16 人被拒绝', () => {
+test('房间人数上限 8 人，第 9 人被拒绝', () => {
   const room = new Room('000001', QUIET);
-  for (let i = 0; i < 15; i++) room.addPlayer('P' + (i + 1));
-  assert.strictEqual(room.players.size, 15);
-  assert.throws(() => room.addPlayer('P16'), /房间已满/);
+  for (let i = 0; i < 8; i++) room.addPlayer('P' + (i + 1));
+  assert.strictEqual(room.players.size, 8);
+  assert.throws(() => room.addPlayer('P9'), /房间已满/);
 });
 
-test('15 人开局：52 张牌每人 3 张足够，底池与战绩正确', () => {
-  const room = new Room('big15', { ...QUIET, turnSeconds: 0 });
-  for (let i = 0; i < 15; i++) room.addPlayer('P' + (i + 1));
+test('8 人开局：52 张牌每人 3 张足够，底池与战绩正确', () => {
+  const room = new Room('big8', { ...QUIET, turnSeconds: 0 });
+  for (let i = 0; i < 8; i++) room.addPlayer('P' + (i + 1));
   room.startHand(room.order[0]);
   assert.strictEqual(room.phase, 'playing');
   let dealt = 0;
@@ -169,9 +169,9 @@ test('15 人开局：52 张牌每人 3 张足够，底池与战绩正确', () =>
     assert.strictEqual(p.bet, QUIET.ante);
     dealt += 3;
   }
-  assert.strictEqual(dealt, 45);
+  assert.strictEqual(dealt, 24);
   assert.ok(dealt <= 52, '52 张牌必须够发');
-  assert.strictEqual(room.pot, QUIET.ante * 15);
+  assert.strictEqual(room.pot, QUIET.ante * 8);
   // 其余玩家依次弃牌，只剩庄家一人 → 立即结算
   let guard = 0;
   while (room.phase === 'playing' && guard++ < 30) {
