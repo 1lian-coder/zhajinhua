@@ -1587,3 +1587,47 @@ test('积分：新玩家从 0 开始；房主可重置所有人积分（局间�
     assert.strictEqual(s.wins, 0);
   }
 });
+
+test('看牌跟注递增翻倍：闷10 → 看20 → 看40 → 看80；关闭开关则不递增', () => {
+  const room = newRoom(3, {
+    ...QUIET, turnSeconds: 0, maxStake: 100, seeMultiplier: 2, seenLadder: true, maxPot: 99999
+  });
+  const [a, b, c] = room.order;
+  room.startHand(a); // 庄 a，先行动 b
+
+  // b 闷牌跟注：付 10，单注不翻倍
+  room.act(b, 'call');
+  assert.strictEqual(room.players.get(b).bet, 20, '闷牌：底注10 + 跟注10');
+  assert.strictEqual(room.stake, 10, '闷牌不触发翻倍');
+
+  // c 看牌跟注：10×2 = 20，单注翻到 20
+  room.look(c);
+  room.act(c, 'call');
+  assert.strictEqual(room.players.get(c).bet, 30, '看牌：底注10 + 跟注20');
+  assert.strictEqual(room.stake, 20, '看牌跟注后单注翻倍');
+
+  // a 看牌跟注：20×2 = 40
+  room.look(a);
+  room.act(a, 'call');
+  assert.strictEqual(room.players.get(a).bet, 50, '看牌：底注10 + 跟注40');
+  assert.strictEqual(room.stake, 40);
+
+  // b 现在也看牌再跟：40×2 = 80
+  room.look(b);
+  room.act(b, 'call');
+  assert.strictEqual(room.players.get(b).bet, 100, '累计：10+10+80');
+  assert.strictEqual(room.stake, 80, '继续翻倍到 80');
+
+  // 关闭开关：不再递增（恒为单注×看牌倍数）
+  const room2 = newRoom(3, {
+    ...QUIET, turnSeconds: 0, maxStake: 100, seeMultiplier: 2, seenLadder: false, maxPot: 99999
+  });
+  const [x, y, z] = room2.order;
+  room2.startHand(x);
+  room2.look(y);
+  room2.act(y, 'call');
+  const s1 = room2.stake;
+  room2.look(z);
+  room2.act(z, 'call');
+  assert.strictEqual(room2.stake, s1, '关闭后单注不随看牌跟注增长');
+});

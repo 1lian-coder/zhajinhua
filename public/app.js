@@ -40,6 +40,7 @@ var AVATARS = [
     { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
+    { key: 'seenLadder', label: '看牌跟注递增翻倍', type: 'bool', def: true },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
