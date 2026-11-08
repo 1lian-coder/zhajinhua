@@ -45,10 +45,13 @@
       </header>
 
       <div class="box">
-        <label class="field" for="nickname">
-          <span class="field-label">你的昵称</span>
-          <input id="nickname" class="input" type="text" maxlength="12" placeholder="比如：阿强" autocomplete="nickname" autocapitalize="off" enterkeyhint="done">
-        </label>
+        <div class="nick-row">
+          <button id="btn-avatar" class="avatar-pick" type="button" title="选择头像" aria-label="选择头像">🐶</button>
+          <label class="field nick-field" for="nickname">
+            <span class="field-label">你的昵称</span>
+            <input id="nickname" class="input" type="text" maxlength="12" placeholder="比如：阿强" autocomplete="nickname" autocapitalize="off" enterkeyhint="done">
+          </label>
+        </div>
       </div>
 
       <div class="box" id="create-box">

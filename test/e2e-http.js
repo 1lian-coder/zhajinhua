@@ -541,6 +541,7 @@ async function main() {
   {
     await sleep(3100);
     let fullHit = false;
+    const capSessions = [];
     // 每轮最多建 4 个（低于限频阈值 5 次/3 秒），轮间等窗口过期
     for (let round = 0; round < 5 && !fullHit; round++) {
       for (let i = 0; i < 4; i++) {
@@ -549,11 +550,15 @@ async function main() {
           fullHit = true;
           break;
         }
+        if (r.ok) capSessions.push({ roomId: r.roomId, playerId: r.playerId, token: r.token });
       }
       if (!fullHit) await sleep(3100);
     }
     if (!fullHit) throw new Error('房间数上限没有生效');
     console.log('✓ 房间总数上限生效（防内存耗尽）');
+    // 清理这些占位房间，释放名额给后面的用例（离开后无真人自动关闭）
+    for (const s of capSessions) await post('/api/leave', s);
+    await sleep(300);
   }
 
   // 5) 连打多局
@@ -650,6 +655,37 @@ async function main() {
   const afterLeave = await getState(sessions[0]);
   if (afterLeave.players.length !== 3) throw new Error('离开后人数不对');
   console.log('✓ 退出房间正常');
+
+  // 6z) 房间自动关闭：只剩人机 / 人都走了
+  {
+    const rc = await post('/api/create', { name: '会关房的人', pin: '2468' });
+    if (!rc.ok) throw new Error('关房测试建房失败: ' + rc.error);
+    const rs = { roomId: rc.roomId, playerId: rc.playerId, token: rc.token };
+    await post('/api/addBot', { ...rs });
+    await post('/api/addBot', { ...rs });
+    const before = await post('/api/info', { roomId: rs.roomId });
+    if (!before.exists) throw new Error('建房后房间应该存在');
+    // 房主退出 → 只剩人机 → 立即关闭
+    await post('/api/leave', { ...rs });
+    await sleep(300);
+    const after = await post('/api/info', { roomId: rs.roomId });
+    if (after.exists) throw new Error('只剩人机的房间应该自动关闭');
+    console.log('✓ 只剩人机的房间自动关闭');
+
+    // 两人房间，都退出 → 关闭
+    const r2 = await post('/api/create', { name: '甲', pin: '2468' });
+    const s1 = { roomId: r2.roomId, playerId: r2.playerId, token: r2.token };
+    const j2 = await post('/api/join', { roomId: r2.roomId, name: '乙' });
+    const s2 = { roomId: r2.roomId, playerId: j2.playerId, token: j2.token };
+    await post('/api/leave', s1);
+    const mid = await post('/api/info', { roomId: r2.roomId });
+    if (!mid.exists) throw new Error('还有一个人时房间不该关闭');
+    await post('/api/leave', s2);
+    await sleep(300);
+    const gone = await post('/api/info', { roomId: r2.roomId });
+    if (gone.exists) throw new Error('人都退出的房间应该自动关闭');
+    console.log('✓ 人都退出后房间自动关闭');
+  }
 
   console.log('\n══ 端到端测试全部通过 ══\n');
 }

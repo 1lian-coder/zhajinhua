@@ -235,6 +235,33 @@ function unregisterStream(roomId, pid, res) {
 
 // ---------------------------------------------------------------- 静态文件
 
+/** 房间里还有几个真人（人机不算） */
+function humansIn(room) {
+  let n = 0;
+  for (const p of room.players.values()) if (!p.isBot) n++;
+  return n;
+}
+
+/** 关闭房间：先通知所有 SSE 连接（前端会退回首页），再删除房间 */
+function closeRoom(room, reason) {
+  const byPlayer = streams.get(room.id);
+  if (byPlayer) {
+    for (const set of byPlayer.values()) {
+      for (const res of set) {
+        try {
+          res.write(`event: closed\ndata: ${JSON.stringify({ reason })}\n\n`);
+          res.end();
+        } catch (e) {
+          /* ignore */
+        }
+      }
+    }
+    streams.delete(room.id);
+  }
+  rooms.delete(room.id);
+  console.log(`[room] 关闭房间 ${room.id}：${reason}`);
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -377,7 +404,7 @@ const api = {
     const name = body.name;
     const id = genRoomId();
     const room = new Room(id, body.config);
-    const player = room.addPlayer(name);
+    const player = room.addPlayer(name, { avatar: body.avatar });
     rooms.set(id, room);
     room.log(`房间 ${id} 已创建`);
     markDirty();
@@ -400,7 +427,7 @@ const api = {
         );
       }
     }
-    const player = room.addPlayer(body.name);
+    const player = room.addPlayer(body.name, { avatar: body.avatar });
     markDirty();
     broadcast(room);
     return { ok: true, roomId: room.id, playerId: player.id, token: player.token };
@@ -428,13 +455,21 @@ const api = {
     room.removePlayer(target.id);
     room.log(`房主移除了人机 ${name}`);
     markDirty();
-    if (room.players.size === 0) {
-      rooms.delete(room.id);
-      streams.delete(room.id);
+    if (humansIn(room) === 0) {
+      closeRoom(room, '房间里没有真人了');
     } else {
       broadcast(room);
     }
     return { ok: true };
+  },
+
+  /** 设置头像（表情，服务端白名单校验） */
+  async avatar(body) {
+    const { room, player } = authPlayer(body);
+    const avatar = room.setAvatar(player.id, body.avatar);
+    markDirty();
+    broadcast(room);
+    return { ok: true, avatar };
   },
 
   async rejoin(body) {
@@ -590,9 +625,8 @@ const api = {
     const { room, player } = authPlayer(body);
     room.removePlayer(player.id);
     markDirty();
-    if (room.players.size === 0) {
-      rooms.delete(room.id);
-      streams.delete(room.id);
+    if (humansIn(room) === 0) {
+      closeRoom(room, '人都退出了');
     } else {
       broadcast(room);
     }
@@ -831,11 +865,14 @@ const gcTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, room] of rooms) {
     try {
+      // 没有真人（只剩人机 / 人都走了）立即关闭
+      if (humansIn(room) === 0) {
+        closeRoom(room, '没有真人，自动关闭');
+        continue;
+      }
       const idle = room.connectedCount() === 0 && now - room.updatedAt > IDLE_ROOM_MS;
       if (idle) {
-        rooms.delete(id);
-        streams.delete(id);
-        console.log(`[gc] 清理空闲房间 ${id}`);
+        closeRoom(room, '空闲超时');
       }
     } catch (e) {
       /* ignore */

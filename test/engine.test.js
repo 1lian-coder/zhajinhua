@@ -1321,3 +1321,99 @@ test('出牌顺序：以当前行动者开头轮转，弃牌/全下的人自动�
   assert.strictEqual(st2.turnOrder.length, room.actorsInHand().length);
   void b; void c; void d;
 });
+
+test('头像：白名单校验、落盘保留、人机随机头像', () => {
+  const room = newRoom(2, QUIET);
+  const [a] = room.order;
+
+  room.setAvatar(a, '🐼');
+  assert.strictEqual(room.players.get(a).avatar, '🐼');
+  assert.strictEqual(room.serialize(a).myAvatar, '🐼');
+
+  assert.throws(() => room.setAvatar(a, '<script>'), /头像不在可选范围/);
+  assert.throws(() => room.setAvatar('不存在的玩家', '🐼'), /玩家不存在/);
+
+  // 清空 = 用名字首字
+  room.setAvatar(a, '');
+  assert.strictEqual(room.players.get(a).avatar, null);
+
+  // 落盘保留
+  room.setAvatar(a, '🦊');
+  const restored = Room.fromJSON(JSON.parse(JSON.stringify(room.toJSON())));
+  assert.strictEqual(restored.players.get(a).avatar, '🦊');
+
+  // 人机自动带随机头像
+  const bot = room.addBot();
+  assert.ok(bot.avatar, '人机应该有随机头像');
+  assert.strictEqual(room.serialize(a).players.find((p) => p.id === bot.id).avatar, bot.avatar);
+});
+
+test('豹子/顺金奖励：开牌时赢家开出豹子，其他在局玩家每人给奖励分（零和）', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 60, baoziBonus: 100, shunjinBonus: 50 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]); // 豹子
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  forceCards(room, c, [card('C', 9), card('C', 2), card('C', 3)]);
+
+  let guard = 0;
+  while (room.phase === 'playing' && guard++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  assert.strictEqual(room.phase, 'showdown');
+
+  const res = room.lastResult;
+  assert.ok(res.bonuses && res.bonuses.length === 1, '应有豹子喜钱记录');
+  assert.strictEqual(res.bonuses[0].type, '豹子');
+  assert.strictEqual(res.bonuses[0].perPlayer, 100);
+  assert.strictEqual(res.bonuses[0].total, 200, '另外两人各给 100');
+
+  const netSum = [...room.players.values()].reduce((s, p) => s + p.net, 0);
+  assert.strictEqual(netSum, 0, '喜钱后账目仍零和');
+  const pa = room.players.get(a);
+  const pb = room.players.get(b);
+  assert.ok(pa.chips > 5000, '赢家筹码应增加（含喜钱）');
+  assert.ok(pb.chips < 5000, '其他人筹码应减少（含喜钱）');
+});
+
+test('顺金奖励：开出顺金时按配置给喜钱；配置为 0 时没有喜钱', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 60, baoziBonus: 100, shunjinBonus: 50 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 7), card('S', 8), card('S', 9)]); // 顺金
+  forceCards(room, b, [card('H', 5), card('D', 6), card('C', 7)]);
+  forceCards(room, c, [card('D', 2), card('H', 3), card('C', 9)]);
+
+  let guard = 0;
+  while (room.phase === 'playing' && guard++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  assert.strictEqual(room.phase, 'showdown');
+  const res = room.lastResult;
+  assert.ok(res.bonuses && res.bonuses.length === 1);
+  assert.strictEqual(res.bonuses[0].type, '顺金');
+  assert.strictEqual(res.bonuses[0].perPlayer, 50);
+  assert.strictEqual(res.bonuses[0].total, 100);
+
+  // 关掉奖励后不再有喜钱
+  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 40, baoziBonus: 0, shunjinBonus: 0 });
+  const [p] = room2.order;
+  room2.startHand(p);
+  forceCards(room2, p, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room2, room2.order[1], [card('S', 5), card('H', 6), card('D', 7)]);
+  let g2 = 0;
+  while (room2.phase === 'playing' && g2++ < 60) {
+    const opts = room2.optionsFor(room2.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room2.act(room2.turnId, 'call');
+    else room2.act(room2.turnId, 'fold');
+  }
+  assert.strictEqual(room2.phase, 'showdown');
+  assert.strictEqual((room2.lastResult.bonuses || []).length, 0, '配置为 0 不该有喜钱');
+});

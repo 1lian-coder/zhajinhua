@@ -13,6 +13,12 @@
   /* ------------------------------------------------------------------ 常量 */
 
   var NICK_KEY = 'zjh.nickname.v1';
+var AVATAR_KEY = 'zjh.avatar.v1';
+var AVATARS = [
+  '🐶', '🐱', '🐼', '🦊', '🐯', '🦁', '🐸', '🐵',
+  '🐰', '🐨', '🐷', '🐔', '🦄', '🐙', '🦖', '🐳',
+  '🎩', '👑', '🦅', '🐺', '🐹', '🐮', '🎯', '🍀'
+];
   var SESS_KEY = 'zjh.sessions.v1';
   var FACTOR_KEY = 'zjh.penaltyFactor.v1';
   var CREATE_KEY = 'zjh.createConfig.v1';
@@ -32,6 +38,8 @@
     { key: 'dealerBid', label: '抢庄模式', type: 'bool', def: false },
     { key: 'bidSeconds', label: '抢庄秒数', def: 10, min: 3, max: 60, step: 1 },
     { key: 'sessionHands', label: '每轮局数(0=不限)', def: 0, min: 0, max: 200, step: 1 },
+    { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
+    { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoRebuy', label: '自动补筹码', type: 'bool', def: true },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -414,9 +422,63 @@
 
   /* ---------------------------------------------------------------- 首页 */
 
+  function readAvatar() {
+    var a = lsGet(AVATAR_KEY, '');
+    return AVATARS.indexOf(a) >= 0 ? a : '';
+  }
+
+  function applyAvatarBtn() {
+    var btn = $('btn-avatar');
+    if (!btn) return;
+    var a = readAvatar();
+    if (a) {
+      btn.textContent = a;
+      btn.classList.add('has');
+    } else {
+      btn.textContent = '👤';
+      btn.classList.remove('has');
+    }
+  }
+
+  /** 头像选择器：选了就存本地，下次进房带上 */
+  function openAvatarPicker(onPick) {
+    var html = '<p class="tips">选一个头像（房间里的朋友都能看到）</p><div class="avatar-grid">';
+    for (var i = 0; i < AVATARS.length; i++) {
+      html += '<button type="button" class="avatar-opt" data-av="' + AVATARS[i] + '">' + AVATARS[i] + '</button>';
+    }
+    html += '</div><div class="modal-btns">' +
+      '<button type="button" class="btn btn-ghost" data-reset="1">用名字首字</button>' +
+      '<button type="button" class="btn btn-ghost" data-close="1">取消</button></div>';
+    var root = showModal(html, { title: '选择头像' });
+    var opts = root.querySelectorAll('.avatar-opt');
+    for (var k = 0; k < opts.length; k++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          var av = btn.getAttribute('data-av');
+          lsSet(AVATAR_KEY, av);
+          applyAvatarBtn();
+          closeModal();
+          if (onPick) onPick(av);
+          else toast('头像已选择：' + av, 'ok');
+        });
+      })(opts[k]);
+    }
+    var reset = root.querySelector('[data-reset]');
+    if (reset) {
+      reset.addEventListener('click', function () {
+        lsSet(AVATAR_KEY, '');
+        applyAvatarBtn();
+        closeModal();
+        if (onPick) onPick('');
+        else toast('已改回名字首字头像', 'ok');
+      });
+    }
+  }
+
   function restoreNickname() {
     var nick = lsGet(NICK_KEY, '');
     if (nick) $('nickname').value = nick;
+    applyAvatarBtn();
   }
 
   function requireNickname() {
@@ -657,7 +719,7 @@
     busy = true;
     var btn = $('btn-create');
     btn.disabled = true;
-    api('/api/create', { name: name, config: cfg, pin: pin }).then(function (res) {
+    api('/api/create', { name: name, config: cfg, pin: pin, avatar: readAvatar() }).then(function (res) {
       busy = false;
       btn.disabled = false;
       if (!res || !res.ok) {
@@ -697,7 +759,7 @@
     busy = true;
     var btn = $('btn-join');
     btn.disabled = true;
-    api('/api/join', { roomId: rid, name: name, password: password }).then(function (res) {
+    api('/api/join', { roomId: rid, name: name, password: password, avatar: readAvatar() }).then(function (res) {
       busy = false;
       btn.disabled = false;
       if (!res || !res.ok) {
@@ -812,6 +874,14 @@
       if (src !== es) return;
       connected = true;
       hideConn();
+    });
+
+    // 房间被关闭（没有真人了 / 人都退出 / 空闲超时）
+    src.addEventListener('closed', function (ev) {
+      if (src !== es) return;
+      var reason = '';
+      try { reason = (JSON.parse(ev.data) || {}).reason || ''; } catch (e) { reason = ''; }
+      handleSessionInvalid(reason ? '房间已关闭：' + reason : '房间已关闭');
     });
 
     src.onopen = function () {
@@ -1529,10 +1599,30 @@
       if (myChips < ante && p.chips >= 50) {
         html += '<button class="btn btn-primary" id="pd-borrow" type="button">向他借分</button>';
       }
+    } else {
+      html += '<button class="btn btn-ghost" id="pd-avatar" type="button">换头像</button>';
     }
     html += '<div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">关闭</button></div>';
 
     var root = showModal(html, { title: isSelf ? '我的信息' : '玩家信息' });
+    var avatarBtn = root.querySelector('#pd-avatar');
+    if (avatarBtn) {
+      avatarBtn.addEventListener('click', function () {
+        closeModal();
+        openAvatarPicker(function (av) {
+          if (!session) return;
+          api('/api/avatar', {
+            roomId: session.roomId,
+            playerId: session.playerId,
+            token: session.token,
+            avatar: av
+          }).then(function (res) {
+            if (!res || !res.ok) toast((res && res.error) || '换头像失败', 'err');
+            else toast('头像已更新', 'ok');
+          });
+        });
+      });
+    }
     var lendBtn = root.querySelector('#pd-lend');
     if (lendBtn) {
       lendBtn.addEventListener('click', function () {
@@ -1975,7 +2065,7 @@
       av.appendChild(ring);
       var face = document.createElement('span');
       face.className = 'avatar-face';
-      face.textContent = initialOf(p.name);
+      face.textContent = p.avatar || initialOf(p.name);
       face.style.background = avatarBg(p.name, p.id);
       av.appendChild(face);
       var sec = document.createElement('i');
@@ -2052,7 +2142,7 @@
     // 我的座位信息（始终显示；大厅也显示，方便看自己筹码）
     if (me) {
       $('my-name').textContent = me.name || '我';
-      $('my-avatar-face').textContent = initialOf(me.name);
+      $('my-avatar-face').textContent = st.myAvatar || initialOf(me.name);
       $('my-avatar-face').style.background = avatarBg(me.name, me.id);
       $('my-chips').textContent = fmtChips(me.chips);
       $('my-bet').textContent = fmtChips(me.bet || 0);
@@ -2444,6 +2534,13 @@
           ' <b>+' + esc(winners[w].amount != null ? winners[w].amount : 0) + '</b></span>';
       }
       html += '</div>';
+    }
+    // 豹子 / 顺金 喜钱
+    var bns = r.bonuses || [];
+    for (var bi2 = 0; bi2 < bns.length; bi2++) {
+      var bn = bns[bi2];
+      html += '<div class="bonus-line">🎁 ' + esc(bn.name) + ' 开出' + esc(bn.type) +
+        ' · 喜钱 <b>+' + esc(bn.total) + '</b> <i>（每人 ' + esc(bn.perPlayer) + '）</i></div>';
     }
     html += '</div>';
 
@@ -3350,6 +3447,7 @@
     $('btn-join').addEventListener('click', doJoin);
     $('btn-refresh-rooms').addEventListener('click', loadRoomList);
     $('btn-resume').addEventListener('click', doResume);
+    $('btn-avatar').addEventListener('click', function () { openAvatarPicker(); });
 
     $('join-room').addEventListener('input', function () {
       var v = digits(this.value).slice(0, 6);

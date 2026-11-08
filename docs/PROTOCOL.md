@@ -274,3 +274,23 @@ SSE 长连接。事件类型：
 - `phase = playing / bidding` 时返回「牌局进行中不能修改设置」
 - `handNo > 0`（已开过局）返回「牌局已开始，设置已锁定」，想改规则请重新建房
 - `ante`（底分）范围 1~10000；`initialChips`（初始筹码）范围 10~1000000
+
+### POST /api/avatar
+设置头像（服务端白名单，24 个表情；空字符串=用名字首字）。
+```json
+{ "roomId":"837261", "playerId":"p1", "token":"…", "avatar":"🐼" }
+```
+返回 `{ ok:true, avatar }`。state 里 `players[].avatar` / `myAvatar` 提供头像。
+
+### 豹子/顺金奖励（配置项）
+- `baoziBonus`：豹子奖励（每人给赢家的分，0=关闭，范围 0~10000）
+- `shunjinBonus`：顺金奖励（同上）
+开牌（showdown）时，若赢家牌型为豹子/顺金，其他在局玩家每人支付该分数（筹码不足按剩余给），记在 `lastResult.bonuses: [{id,name,type,perPlayer,total}]`。
+
+### SSE 房间关闭事件
+房间没有真人/人都退出/空闲超时被服务端关闭时，SSE 会推送：
+```
+event: closed
+data: {"reason":"人都退出了"}
+```
+前端收到后自动退回首页。
