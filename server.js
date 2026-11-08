@@ -242,6 +242,19 @@ function prefetchNext() {
   });
 }
 
+function warmBetVoice(room) {
+  try {
+    const ante = Number(room.config && room.config.ante) || 10;
+    const texts = [];
+    for (const p of room.players.values()) {
+      if (!p.inHand) continue;
+      texts.push(p.name + ' 押注 ' + ante);
+      texts.push(p.name + ' 押注 ' + (ante * 2));
+    }
+    prefetchTts(texts);
+  } catch (e) { /* ignore */ }
+}
+
 function warmPlayerVoice(name) {
   const n = sanitizeTtsText(name);
   if (!n) return;
@@ -871,6 +884,8 @@ const api = {
     if (room.phase === 'lobby') room.startHand(player.id);
     else if (room.phase === 'showdown') room.nextHand(player.id);
     else throw new Error('本局还没结束');
+    warmBetVoice(room);
+    markDirty();
     broadcast(room);
     return { ok: true };
   },

@@ -2675,6 +2675,21 @@ var AVATARS = [
     }
   }
 
+  function prefetchTurnVoice(st) {
+    if (!useServerVoice() || !voiceOn || !st) return;
+    if (st.phase !== 'playing' || !st.turnId) return;
+    var tp = null;
+    var ps = st.players || [];
+    for (var i = 0; i < ps.length; i++) {
+      if (ps[i] && ps[i].id === st.turnId) { tp = ps[i]; break; }
+    }
+    if (!tp || !tp.name) return;
+    var stake = Number(st.stake || (st.config && st.config.ante) || 10);
+    var mult = Number((st.config && st.config.seeMultiplier) || 2);
+    var cost = tp.seen ? stake * mult : stake;
+    prefetchVoice(tp.name + ' 押注 ' + cost);
+  }
+
   function speechDrain() {
     if (speechSpeaking || !speechQueue.length || !voiceSupported()) return;
     var t = speechQueue.shift();
@@ -2839,6 +2854,7 @@ var AVATARS = [
     lastPhase = st.phase;
 
     prefetchRoomVoice(st);
+    prefetchTurnVoice(st);
     renderHeader(st);
 
     $('panel-lobby').hidden = st.phase !== 'lobby';
