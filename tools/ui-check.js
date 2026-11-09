@@ -375,7 +375,9 @@ async function main() {
     if (!ap.ok) throw new Error('房主审批失败: ' + ap.error);
     const jst = await post('/api/joinStatus', { roomId, joinId: rq.joinId });
     if (!jst.ok || !jst.playerId) throw new Error('审批状态异常');
-    bots.push({ name, roomId, playerId: jst.playerId, token: jst.playerToken });
+    const botSess = { roomId, playerId: jst.playerId, token: jst.playerToken };
+    await post('/api/ready', { ...botSess, ready: true });
+    bots.push({ name, ...botSess });
   }
   console.log(`✓ ${bots.length} 个机器人已加入`);
 
@@ -429,6 +431,10 @@ async function main() {
   else console.log('✓ 已把总注封顶调到 300，便于快速开牌');
 
   await sleep(500);
+
+  // ---- 准备（所有人就绪后才能开局）----
+  await post('/api/ready', { ...hostSession, ready: true });
+  await sleep(600);
 
   // ---- 开始游戏 ----
   await cdp.eval(`(() => {

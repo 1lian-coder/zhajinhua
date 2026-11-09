@@ -3633,6 +3633,39 @@ var AVATARS = [
     var lockNote = $('room-pin-lock');
     if (lockNote) lockNote.hidden = isHost;
     $('config-msg').textContent = '';
+    renderReadyList(st);
+  }
+
+  /** 大厅：准备状态列表（谁准备好了、谁还没） */
+  function renderReadyList(st) {
+    var list = $('ready-list');
+    var sum = $('ready-summary');
+    if (!list) return;
+    var ps = st.players || [];
+    var readyCount = 0;
+    var total = 0;
+    for (var i = 0; i < ps.length; i++) {
+      if (ps[i].isBot || ps[i].sitOut) continue;
+      total++;
+      if (ps[i].ready) readyCount++;
+    }
+    if (sum) sum.textContent = total ? (readyCount + '/' + total + ' 已准备') : '-';
+    var html = '';
+    for (var k = 0; k < ps.length; k++) {
+      var p = ps[k];
+      if (p.isBot) {
+        html += '<span class="ready-chip ok">' + esc(p.name) + ' · 人机就绪</span>';
+        continue;
+      }
+      if (p.sitOut) {
+        html += '<span class="ready-chip sitout">' + esc(p.name) + ' · 观战</span>';
+        continue;
+      }
+      var cls = p.ready ? 'ok' : 'wait';
+      var mark = p.ready ? '\u2705 ' : '\u23f3 ';
+      html += '<span class="ready-chip ' + cls + '">' + mark + esc(p.name) + '</span>';
+    }
+    list.innerHTML = html;
   }
 
   function saveConfig() {
@@ -4349,13 +4382,37 @@ var AVATARS = [
           ? (st.nextRoundAt ? '等待其他玩家，倒计时结束自动开始新一轮' : '本轮局数已打完 · 可以直接开下一轮，局数也能再改')
           : '本局结束 · 准备下一局';
       } else {
+        // 大厅阶段：所有参与者点「准备」，全员就绪后房主才能开局
         actions.hidden = true;
         primary.hidden = false;
         var n = (st.players || []).length;
         var enough = n >= 2;
-        primary.disabled = busy || !enough;
-        primary.textContent = enough ? '开始游戏' : ('等待玩家（' + n + '/2）');
-        tipText = (st.hostId === mid ? '你是房主' : '等待房主开局') + ' · ' + n + ' 人在房间';
+        var isHost = st.hostId === mid;
+        var waiters = st.readyWaiters || [];
+        var allReady = !!st.allReady && enough;
+        var myReady = !!st.myReady;
+        if (!enough) {
+          primary.disabled = true;
+          primary.textContent = '等待玩家（' + n + '/2）';
+          tipText = '至少 2 人才能开局 · 当前 ' + n + ' 人';
+        } else if (isHost) {
+          // 房主：全员就绪才能点「开始游戏」
+          primary.disabled = busy || !allReady;
+          primary.textContent = allReady ? '开始游戏' : ('等待准备（' + (n - waiters.length) + '/' + n + '）');
+          tipText = allReady
+            ? '所有人都准备好了，可以开局'
+            : '还有 ' + waiters.length + ' 人没准备：' + waiters.map(function (x) { return x.name; }).join('、');
+        } else if (myReady) {
+          primary.disabled = true;
+          primary.textContent = '已准备 · 等待房主开始';
+          tipText = waiters.length
+            ? '已准备 · 还差 ' + waiters.length + ' 人（' + waiters.map(function (x) { return x.name; }).join('、') + '）'
+            : '已准备 · 等待房主点开始';
+        } else {
+          primary.disabled = busy;
+          primary.textContent = '准备';
+          tipText = '点「准备」等所有人就绪后由房主开局 · ' + n + ' 人在房间';
+        }
       }
     }
 
@@ -4837,8 +4894,50 @@ var AVATARS = [
     btn.textContent = n > 0 ? ('申请 ' + n) : '申请';
     btn.classList.toggle('has-pending', n > 0);
   }
+  /** 准备 / 取消准备 */
+  function doReady(ready) {
+    if (!session || !state || busy) return;
+    busy = true;
+    api('/api/ready', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      ready: !!ready
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) {
+        toast((res && res.error) || '操作失败', 'err');
+      } else if (ready) {
+        toast('已准备，等待其他玩家', 'ok');
+      } else {
+        toast('已取消准备', 'ok');
+      }
+      if (state) renderBottom(state);
+    });
+  }
+
+  /** 取消准备（已准备后想退出） */
+  function doUnready() {
+    doReady(false);
+  }
   function doStart() {
-    if (!session || busy) return;
+    if (!session || state === null) return;
+    // 大厅阶段：非房主点「准备」，房主点「开始游戏」
+    if (state.phase === 'lobby') {
+      var isHost = state.hostId === meId();
+      if (!isHost) {
+        if (state.myReady) return; // 已经准备了，按钮是禁用的
+        doReady(true);
+        return;
+      }
+      if (!state.allReady) {
+        // 房主也需要自己准备：自动帮房主就绪并提示还缺谁
+        var waiters = state.readyWaiters || [];
+        toast('还有 ' + waiters.length + ' 人没准备：' + waiters.map(function (x) { return x.name; }).join('、'), 'err');
+        return;
+      }
+    }
+    if (busy) return;
     // 本轮局数已打完：进入下一轮（沿用原设置），不强制新开房间
     if (state && state.lastResult && state.lastResult.sessionOver) {
       doNextRound();

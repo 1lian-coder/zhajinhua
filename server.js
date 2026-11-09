@@ -1065,6 +1065,15 @@ const api = {
     return { ok: true };
   },
 
+  /** 准备/取消准备（大厅阶段；全员就绪房主才能开局） */
+  async ready(body) {
+    const { room, player } = authPlayer(body);
+    room.setReady(player.id, body.ready !== false);
+    markDirty();
+    broadcast(room);
+    return { ok: true, ready: !!body.ready, allReady: room.allReady() };
+  },
+
   /** 结算阶段：请求开始下一轮（30 秒集合等待，没点的人本轮观战） */
   async nextRound(body) {
     const { room, player } = authPlayer(body);

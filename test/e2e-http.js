@@ -58,6 +58,10 @@ const post = (p, b) => req('POST', p, b);
  * host: 房主会话（含 roomId/playerId/token）
  * 返回正式会话 { roomId, playerId, token, name }
  */
+async function hostReady(host) {
+  await post('/api/ready', { ...host, ready: true });
+}
+
 async function joinApproved(host, name, password) {
   const r = await post('/api/requestJoin', { roomId: host.roomId, name, password });
   if (!r.ok) throw new Error('申请加入失败: ' + (r.error || r.code || ''));
@@ -73,7 +77,10 @@ async function joinApproved(host, name, password) {
   if (!st.ok || st.status !== 'approved' || !st.playerId) {
     throw new Error('审批状态异常: ' + JSON.stringify(st));
   }
-  return { roomId: host.roomId, playerId: st.playerId, token: st.playerToken, name };
+  const sess = { roomId: host.roomId, playerId: st.playerId, token: st.playerToken, name };
+  // 测试里新玩家直接准备好，避免每个用例都要点准备
+  await post('/api/ready', { ...sess, ready: true });
+  return sess;
 }
 
 function sleep(ms) {
@@ -264,7 +271,8 @@ async function main() {
       config: { ante: 10, baseStake: 10, maxStake: 100, maxPot: 300, seeMultiplier: 2, turnSeconds: 0 }
     });
 
-    const started = await post('/api/start', { ...sSess });
+    await hostReady(sSess);
+  const started = await post('/api/start', { ...sSess });
     if (!started.ok) throw new Error('单人+人机开局失败: ' + started.error);
 
     // 真人开局就弃牌，人机自己互打（服务端 botTick 自动驱动）
@@ -361,6 +369,7 @@ async function main() {
       config: { ante: 10, initialChips: 40, baseStake: 10, maxStake: 100, maxPot: 99999, seeMultiplier: 2, turnSeconds: 0, autoRebuy: false }
     });
     if (!cfg2.ok) throw new Error('调小初始筹码失败: ' + cfg2.error);
+    await hostReady(arSessions[0]);
     await post('/api/start', { ...arSessions[0] });
 
     // 找到筹码不足跟注的人，直接让所有人轮到就行动，直到某个人 chips < callCost 时全下
@@ -472,6 +481,7 @@ async function main() {
     const anBot = await post('/api/addBot', { ...ar });
     if (!anBot.ok) throw new Error('加人机失败: ' + anBot.error);
 
+    await hostReady(ar);
     await post('/api/start', { ...ar });
     // 一路弃牌/跟注把这一局打完
     let g = 0;
@@ -586,6 +596,7 @@ async function main() {
   let totalActions = 0;
 
   for (let h = 0; h < HANDS; h++) {
+    await hostReady(sessions[0]);
     const started = await post('/api/start', {
       roomId,
       playerId: sessions[0].playerId,

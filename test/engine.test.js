@@ -43,6 +43,8 @@ function mulberry32(a) {
 function newRoom(n, cfg) {
   const room = new Room('000001', cfg);
   for (let i = 0; i < n; i++) room.addPlayer('P' + (i + 1));
+  // 老测试默认“所有人都已准备”，准备机制由专门的用例覆盖
+  for (const p of room.players.values()) p.ready = true;
   return room;
 }
 
@@ -161,6 +163,7 @@ test('房间人数上限 8 人，第 9 人被拒绝', () => {
 test('8 人开局：52 张牌每人 3 张足够，底池与战绩正确', () => {
   const room = new Room('big8', { ...QUIET, turnSeconds: 0 });
   for (let i = 0; i < 8; i++) room.addPlayer('P' + (i + 1));
+  for (const q of room.players.values()) q.ready = true;
   room.startHand(room.order[0]);
   assert.strictEqual(room.phase, 'playing');
   let dealt = 0;
@@ -593,7 +596,8 @@ test('落盘再恢复：进行中的牌局作废并原额退注，账目保持�
     assert.strictEqual(p.cards, null);
   }
 
-  // 恢复后还能正常开新的一局
+  // 恢复后还能正常开新的一局（恢复的玩家需要重新点准备）
+  for (const q of restored.players.values()) q.ready = true;
   restored.startHand(restored.order[0]);
   assert.strictEqual(restored.phase, 'playing');
   assert.strictEqual(restored.pot, QUIET.ante * 3);
@@ -606,6 +610,7 @@ test('人机：单个真人 + 人机即可开局，人机自动出牌打完整�
   const me = room.addPlayer('独狼');
   room.addBot();
   room.addBot();
+  me.ready = true;
 
   assert.strictEqual(room.players.size, 3);
   assert.strictEqual(room.hostId, me.id, '人机不能当房主');
@@ -640,6 +645,7 @@ test('人机：决策函数覆盖强弱牌路径，且落盘恢复后人机身�
   const me = room.addPlayer('裁判');
   const bot = room.addBot();
   room.addBot();
+  me.ready = true;
   room.startHand(me.id);
   room.stake = QUIET.baseStake;
   room.pot = 100;
@@ -1063,6 +1069,7 @@ test('抢庄：人机在抢庄阶段自动决策，整局可打完', () => {
   const me = room.addPlayer('独狼');
   room.addBot();
   room.addBot();
+  me.ready = true;
   room.startHand(me.id);
 
   assert.strictEqual(room.phase, 'bidding');
@@ -1722,4 +1729,67 @@ test('加入申请：房主审批后才进房间，拒绝则进不去，过期�
   assert.strictEqual(room2.requireApproval(), false);
   const p2 = room2.addPlayer('直接进');
   assert.ok(p2.id);
+});
+
+test('准备机制：全员准备才能开局，缺一人则报错并列出名字', () => {
+  const room = new Room('ready1', { ...QUIET, turnSeconds: 0 });
+  room.addPlayer('甲');
+  room.addPlayer('乙');
+  room.addPlayer('丙');
+  const [a, b, c] = room.order;
+  assert.strictEqual(room.allReady(), false, '刚进房都没准备');
+
+  // 只准备一人 → 仍不能开局
+  room.setReady(a, true);
+  assert.strictEqual(room.players.get(a).ready, true);
+  assert.throws(() => room.startHand(b), /还有 2 人没准备/);
+  // 报错信息里带没准备的人名
+  try {
+    room.startHand(b);
+    assert.fail('不该开局成功');
+  } catch (e) {
+    assert.ok(e.message.indexOf('乙') >= 0 || e.message.indexOf('丙') >= 0, '要列出谁没准备');
+  }
+
+  // 再多一人
+  room.setReady(b, true);
+  assert.throws(() => room.startHand(c), /还有 1 人没准备/);
+  // 最后一人准备 → 房主点开始成功
+  room.setReady(c, true);
+  assert.strictEqual(room.allReady(), true);
+  room.startHand(c);
+  assert.strictEqual(room.phase, 'playing');
+  // 开局后准备状态清零（同一轮后面的局不用再点准备）
+  for (const p of room.players.values()) assert.strictEqual(p.ready, false);
+});
+
+test('准备机制：观战者和人机不需要准备；取消准备生效', () => {
+  const room = new Room('ready2', { ...QUIET, turnSeconds: 0 });
+  const a = room.addPlayer('真人甲');
+  const b = room.addPlayer('真人乙');
+  const bot = room.addBot();
+  // 人机自动就绪
+  assert.strictEqual(bot.ready, true, '人机自动准备');
+  assert.strictEqual(room.readyWaiters().length, 2, '两个真人待准备');
+
+  // 乙选择观战 → 不计入准备名单
+  room.setSitOut(b.id, true);
+  assert.strictEqual(room.readyWaiters().length, 1, '观战者不需要准备');
+  // 观战状态下不能点准备
+  assert.throws(() => room.setReady(b.id, true), /观战/);
+
+  room.setReady(a.id, true);
+  assert.strictEqual(room.allReady(), true, '甲 + 人机就绪即可开局');
+  room.startHand(a.id);
+  assert.strictEqual(room.phase, 'playing');
+  // 乙是观战，本局不参与
+  assert.strictEqual(room.players.get(b.id).inHand, false);
+
+  // 取消准备后不能开局
+  room.abortHand('测试');
+  room.setSitOut(b.id, false);
+  room.setReady(a.id, false);
+  assert.strictEqual(room.players.get(a.id).ready, false);
+  assert.strictEqual(room.allReady(), false);
+  assert.throws(() => room.startHand(a.id), /还有 2 人没准备|没准备/);
 });
