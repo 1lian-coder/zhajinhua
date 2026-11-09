@@ -1675,3 +1675,51 @@ test('固定 8 座位：新玩家坐空位，换座位改变出牌顺序，牌�
   assert.strictEqual(room.players.get(b).seat, 3);
   assert.deepStrictEqual(room.order, [b, c, a]);
 });
+
+test('加入申请：房主审批后才进房间，拒绝则进不去，过期申请清理', () => {
+  const room = newRoom(2, { ...QUIET, requireApproval: true });
+  const [a, b] = room.order;
+  assert.strictEqual(room.requireApproval(), true);
+
+  // 申请人：进不了 players，只在 pendingJoins
+  const req = room.requestJoin('新来的');
+  assert.strictEqual(room.players.size, 2, '申请不占座位');
+  assert.strictEqual(room.pendingJoins.size, 1);
+  assert.strictEqual(req.status, 'pending');
+  // 重名申请被拒
+  assert.throws(() => room.requestJoin('新来的'), /已经有人用了/);
+  // 非房主不能审批
+  assert.throws(() => room.approveJoin(req.id, b), /只有房主/);
+  assert.throws(() => room.rejectJoin(req.id, b), /只有房主/);
+
+  // 房主同意 → 进入 players
+  const p = room.approveJoin(req.id, a);
+  assert.strictEqual(room.players.size, 3);
+  assert.strictEqual(room.pendingJoins.get(req.id).status, 'approved');
+  const st = room.joinStatus(req.id);
+  assert.strictEqual(st.status, 'approved');
+  assert.strictEqual(st.playerId, p.id);
+  assert.ok(st.playerToken, '同意后拿到正式 token');
+  // 重复审批被拒
+  assert.throws(() => room.approveJoin(req.id, a), /已经处理过了/);
+
+  // 拒绝流程
+  const req2 = room.requestJoin('捣乱的');
+  room.rejectJoin(req2.id, a);
+  assert.strictEqual(room.players.size, 3, '被拒绝的不进房间');
+  assert.strictEqual(room.joinStatus(req2.id).status, 'rejected');
+
+  // 序列化：房主看到待审批列表，其他人看不到
+  const req3 = room.requestJoin('排队中');
+  const hostView = room.serialize(a);
+  assert.strictEqual(hostView.pendingJoins.length, 1);
+  assert.strictEqual(hostView.pendingJoinCount, 1);
+  const otherView = room.serialize(b);
+  assert.strictEqual(otherView.pendingJoins.length, 0, '非房主看不到申请列表');
+
+  // 关闭审批开关后可以直接加入
+  const room2 = newRoom(2, { ...QUIET, requireApproval: false });
+  assert.strictEqual(room2.requireApproval(), false);
+  const p2 = room2.addPlayer('直接进');
+  assert.ok(p2.id);
+});

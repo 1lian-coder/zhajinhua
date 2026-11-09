@@ -966,6 +966,57 @@ const api = {
     return { ok: true, roomId: room.id, playerId: player.id, token: player.token };
   },
 
+  /** 申请加入（房主同意后才真正进房） */
+  async requestJoin(body) {
+    if (rateLimited('join', 30)) throw userError('操作太频繁，请稍后再试');
+    if (totalPlayerCount() >= MAX_TOTAL_PLAYERS) throw userError('服务器人数已满，请稍后再试');
+    const room = getRoomOrThrow(body.roomId);
+    if (room.players.size + room.pendingJoins.size >= MAX_PLAYERS) {
+      throw userError(`房间已满（最多 ${MAX_PLAYERS} 人）`);
+    }
+    if (room.joinPin) {
+      if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
+      if (!room.checkJoinPin(body.password)) {
+        recordPinFail();
+        throw userError(
+          String(body.password || '') ? '房间密码不正确' : '这个房间需要密码',
+          'ROOM_PASSWORD_REQUIRED'
+        );
+      }
+    }
+    const req = room.requestJoin(body.name, { avatar: body.avatar });
+    markDirty();
+    broadcast(room);
+    return { ok: true, pending: true, roomId: room.id, joinId: req.id, token: req.token, name: req.name };
+  },
+
+  /** 申请者查询自己是否被同意 */
+  async joinStatus(body) {
+    const room = getRoomOrThrow(body.roomId);
+    const st = room.joinStatus(String(body.joinId || ''));
+    if (!st) throw userError('这条申请已经失效，请重新申请', 'JOIN_EXPIRED');
+    return { ok: true, ...st };
+  },
+
+  /** 房主同意加入 */
+  async approveJoin(body) {
+    const { room, player } = authPlayer(body);
+    const p = room.approveJoin(String(body.joinId || ''), player.id);
+    warmPlayerVoice(p.name);
+    markDirty();
+    broadcast(room);
+    return { ok: true, playerId: p.id, name: p.name };
+  },
+
+  /** 房主拒绝加入 */
+  async rejectJoin(body) {
+    const { room, player } = authPlayer(body);
+    room.rejectJoin(String(body.joinId || ''), player.id);
+    markDirty();
+    broadcast(room);
+    return { ok: true };
+  },
+
   /** 房主添加人机（大厅/结算阶段） */
   async addBot(body) {
     const { room, player } = authPlayer(body);
@@ -1457,6 +1508,7 @@ const gcTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, room] of rooms) {
     try {
+      room.gcPendingJoins();
       // 没有真人（只剩人机 / 人都走了）立即关闭
       if (humansIn(room) === 0) {
         closeRoom(room, '没有真人，自动关闭');

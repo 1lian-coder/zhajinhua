@@ -38,6 +38,7 @@ var AVATARS = [
     { key: 'sessionHands', label: '每轮局数(0=不限)', def: 0, min: 0, max: 200, step: 1 },
     { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
+    { key: 'requireApproval', label: '新人进房需房主同意', type: 'bool', def: true },
     { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -865,7 +866,7 @@ var AVATARS = [
     busy = true;
     var btn = $('btn-join');
     btn.disabled = true;
-    api('/api/join', { roomId: rid, name: name, password: password, avatar: readAvatar() }).then(function (res) {
+    api('/api/requestJoin', { roomId: rid, name: name, password: password, avatar: readAvatar() }).then(function (res) {
       busy = false;
       btn.disabled = false;
       if (!res || !res.ok) {
@@ -879,6 +880,11 @@ var AVATARS = [
           }
         }
         toast((res && res.error) || '加入房间失败', 'err');
+        return;
+      }
+      // 已发出申请：等待房主同意
+      if (res.pending) {
+        showJoinPending(res.roomId, res.joinId, res.token, name);
         return;
       }
       enterRoom({
@@ -2909,6 +2915,7 @@ var AVATARS = [
     var phaseChanged = st.phase !== lastPhase;
     lastPhase = st.phase;
 
+    updateApprovalBtn();
     prefetchRoomVoice(st);
     prefetchTurnVoice(st);
     renderHeader(st);
@@ -4678,6 +4685,158 @@ var AVATARS = [
     var left = Math.max(0, Math.round((state.nextRoundAt - state.serverNow) / 1000 - (Date.now() - clock.localAt) / 1000));
     el.textContent = left > 0 ? String(left) : '0';
   }
+  /* ------------------------------------------- 加入申请（房主审批） */
+
+  var joinPendingTimer = null;
+  var joinPendingCtx = null;
+
+  /** 已发出申请：显示等待界面并轮询结果 */
+  function showJoinPending(roomId, joinId, token, name) {
+    if (joinPendingTimer) {
+      clearInterval(joinPendingTimer);
+      joinPendingTimer = null;
+    }
+    joinPendingCtx = { roomId: roomId, joinId: joinId, token: token, name: name };
+    var html = '';
+    html += '<div class="join-pending">';
+    html += '<div class="jp-spin">⏳</div>';
+    html += '<div class="jp-title">已向房主发出加入申请</div>';
+    html += '<div class="jp-room">房号 <b>' + esc(roomId) + '</b> · 昵称 <b>' + esc(name) + '</b></div>';
+    html += '<div class="jp-note">等房主同意后会自动进入房间，请稍候…</div>';
+    html += '<div class="jp-btns">' +
+      '<button id="jp-cancel" class="btn btn-ghost" type="button">取消申请</button>' +
+      '</div>';
+    html += '</div>';
+    var root = showModal(html, { title: '等待房主同意' });
+    var cancelBtn = root.querySelector('#jp-cancel');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', function () {
+        stopJoinPending();
+        closeModal();
+        toast('已取消加入申请', 'ok');
+      });
+    }
+    joinPendingTimer = setInterval(pollJoinStatus, 2000);
+    pollJoinStatus();
+  }
+
+  function stopJoinPending() {
+    if (joinPendingTimer) {
+      clearInterval(joinPendingTimer);
+      joinPendingTimer = null;
+    }
+    joinPendingCtx = null;
+  }
+
+  /** 轮询：房主同意 → 自动进房；被拒绝 → 提示 */
+  function pollJoinStatus() {
+    var ctx = joinPendingCtx;
+    if (!ctx) return;
+    api('/api/joinStatus', { roomId: ctx.roomId, joinId: ctx.joinId }).then(function (res) {
+      if (!res || !res.ok) {
+        stopJoinPending();
+        closeModal();
+        toast((res && res.error) || '申请已失效，请重新申请', 'err');
+        return;
+      }
+      if (res.status === 'approved' && res.playerId && res.playerToken) {
+        stopJoinPending();
+        closeModal();
+        toast('房主已同意，正在进入房间…', 'ok');
+        enterRoom({
+          roomId: ctx.roomId,
+          playerId: res.playerId,
+          token: res.playerToken,
+          name: ctx.name
+        });
+        return;
+      }
+      if (res.status === 'rejected') {
+        stopJoinPending();
+        closeModal();
+        toast('房主拒绝了你的加入申请', 'err');
+      }
+    });
+  }
+
+  /** 房主：打开审批列表 */
+  function openJoinApprovals() {
+    if (!state) return;
+    var list = state.pendingJoins || [];
+    if (!list.length) {
+      toast('现在没有待审批的加入申请', 'ok');
+      return;
+    }
+    var html = '<div class="approve-list">';
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      html += '<div class="approve-row" data-id="' + esc(r.id) + '">' +
+        '<div class="approve-info"><b>' + esc(r.name) + '</b>' +
+        '<i class="approve-time">' + esc(fmtClock(r.at)) + ' 申请</i></div>' +
+        '<div class="approve-btns">' +
+        '<button class="btn btn-primary btn-small ap-ok" data-id="' + esc(r.id) + '" type="button">同意</button>' +
+        '<button class="btn btn-ghost btn-small ap-no" data-id="' + esc(r.id) + '" type="button">拒绝</button>' +
+        '</div></div>';
+    }
+    html += '</div>';
+    var root = showModal(html, { title: '加入申请（' + list.length + '）' });
+    var okBtns = root.querySelectorAll('.ap-ok');
+    for (var k = 0; k < okBtns.length; k++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          var jid = btn.getAttribute('data-id');
+          btn.disabled = true;
+          api('/api/approveJoin', {
+            roomId: session.roomId,
+            playerId: session.playerId,
+            token: session.token,
+            joinId: jid
+          }).then(function (res) {
+            if (!res || !res.ok) {
+              btn.disabled = false;
+              toast((res && res.error) || '同意失败', 'err');
+              return;
+            }
+            toast('已同意 ' + (res.name || '') + ' 加入', 'ok');
+            closeModal();
+          });
+        });
+      })(okBtns[k]);
+    }
+    var noBtns = root.querySelectorAll('.ap-no');
+    for (var n = 0; n < noBtns.length; n++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          var jid = btn.getAttribute('data-id');
+          btn.disabled = true;
+          api('/api/rejectJoin', {
+            roomId: session.roomId,
+            playerId: session.playerId,
+            token: session.token,
+            joinId: jid
+          }).then(function (res) {
+            if (!res || !res.ok) {
+              btn.disabled = false;
+              toast((res && res.error) || '拒绝失败', 'err');
+              return;
+            }
+            toast('已拒绝该申请', 'ok');
+            closeModal();
+          });
+        });
+      })(noBtns[n]);
+    }
+  }
+
+  /** 顶栏「申请」按钮状态（有申请时高亮数字） */
+  function updateApprovalBtn() {
+    var btn = document.getElementById('btn-approvals');
+    if (!btn) return;
+    var n = (state && state.pendingJoinCount) || 0;
+    btn.hidden = !state || state.hostId !== meId();
+    btn.textContent = n > 0 ? ('申请 ' + n) : '申请';
+    btn.classList.toggle('has-pending', n > 0);
+  }
   function doStart() {
     if (!session || busy) return;
     // 本轮局数已打完：进入下一轮（沿用原设置），不强制新开房间
@@ -4897,6 +5056,7 @@ var AVATARS = [
       if (soundOn) { primeAudio(); beep(); }
     });
     $('btn-voice').addEventListener('click', toggleVoice);
+    $('btn-approvals').addEventListener('click', openJoinApprovals);
     updateVoiceBtn();
     updateSoundBtn();
 

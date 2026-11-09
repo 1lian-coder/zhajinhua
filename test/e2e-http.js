@@ -53,6 +53,29 @@ function req(method, p, body) {
 const get = (p) => req('GET', p);
 const post = (p, b) => req('POST', p, b);
 
+/**
+ * 申请加入 + 等房主批准（房间默认需要房主审批）
+ * host: 房主会话（含 roomId/playerId/token）
+ * 返回正式会话 { roomId, playerId, token, name }
+ */
+async function joinApproved(host, name, password) {
+  const r = await post('/api/requestJoin', { roomId: host.roomId, name, password });
+  if (!r.ok) throw new Error('申请加入失败: ' + (r.error || r.code || ''));
+  if (!r.pending) return { roomId: r.roomId, playerId: r.playerId, token: r.token, name };
+  const ok = await post('/api/approveJoin', {
+    roomId: host.roomId,
+    playerId: host.playerId,
+    token: host.token,
+    joinId: r.joinId
+  });
+  if (!ok.ok) throw new Error('房主同意失败: ' + (ok.error || ''));
+  const st = await post('/api/joinStatus', { roomId: host.roomId, joinId: r.joinId });
+  if (!st.ok || st.status !== 'approved' || !st.playerId) {
+    throw new Error('审批状态异常: ' + JSON.stringify(st));
+  }
+  return { roomId: host.roomId, playerId: st.playerId, token: st.playerToken, name };
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -293,9 +316,8 @@ async function main() {
 
   const sessions = [{ roomId, playerId: created.playerId, token: created.token, name: '阿强' }];
   for (const name of ['小李', '老王', '小张']) {
-    const r = await post('/api/join', { roomId, name });
-    if (!r.ok) throw new Error('加入失败: ' + r.error);
-    sessions.push({ roomId, playerId: r.playerId, token: r.token, name });
+    const s = await joinApproved(sessions[0], name);
+    sessions.push(s);
   }
   console.log(`✓ ${sessions.length} 名玩家加入`);
 
@@ -332,9 +354,7 @@ async function main() {
     const arRoom = allinCreated.roomId;
     const arSessions = [{ roomId: arRoom, playerId: allinCreated.playerId, token: allinCreated.token }];
     for (const nm of ['全下乙', '全下丙', '全下丁']) {
-      const r = await post('/api/join', { roomId: arRoom, name: nm });
-      if (!r.ok) throw new Error('全下房间加入失败: ' + r.error);
-      arSessions.push({ roomId: arRoom, playerId: r.playerId, token: r.token });
+      arSessions.push(await joinApproved(arSessions[0], nm));
     }
     const cfg2 = await post('/api/config', {
       ...arSessions[0],
@@ -412,15 +432,15 @@ async function main() {
     const info = await get(`/api/roomInfo?roomId=${pr.roomId}`);
     if (info.hasJoinPin !== true) throw new Error('roomInfo 没报告 hasJoinPin');
 
-    const noPw = await post('/api/join', { roomId: pr.roomId, name: '无密码者' });
+    const noPw = await post('/api/requestJoin', { roomId: pr.roomId, name: '无密码者' });
     if (noPw.ok || noPw.code !== 'ROOM_PASSWORD_REQUIRED') {
       throw new Error('无密码竟然进房了: ' + JSON.stringify(noPw));
     }
-    const badPw = await post('/api/join', { roomId: pr.roomId, name: '错密码者', password: '9999' });
+    const badPw = await post('/api/requestJoin', { roomId: pr.roomId, name: '错密码者', password: '9999' });
     if (badPw.ok) throw new Error('错密码竟然进房了');
 
-    const goodPw = await post('/api/join', { roomId: pr.roomId, name: '对密码者', password: '1234' });
-    if (!goodPw.ok) throw new Error('正确密码进不去: ' + goodPw.error);
+    const goodPw = await joinApproved(pr, '对密码者', '1234');
+    if (!goodPw.playerId) throw new Error('正确密码进不去');
 
     // 状态下发不能出现明文密码
     const v = await get(`/api/state?roomId=${pr.roomId}&playerId=${pr.playerId}&token=${pr.token}`);
@@ -429,8 +449,8 @@ async function main() {
 
     // 清除密码后可直接加入
     await post('/api/setRoomPin', { ...pr, password: '' });
-    const afterClear = await post('/api/join', { roomId: pr.roomId, name: '清除后加入' });
-    if (!afterClear.ok) throw new Error('取消密码后仍进不去');
+    const afterClear = await joinApproved(pr, '清除后加入');
+    if (!afterClear.playerId) throw new Error('取消密码后仍进不去');
 
     console.log('✓ 房间密码：无密码/错密码被拒（code=ROOM_PASSWORD_REQUIRED），正确密码可进，明文不泄露');
 
@@ -675,8 +695,7 @@ async function main() {
     // 两人房间，都退出 → 关闭
     const r2 = await post('/api/create', { name: '甲', pin: '2468' });
     const s1 = { roomId: r2.roomId, playerId: r2.playerId, token: r2.token };
-    const j2 = await post('/api/join', { roomId: r2.roomId, name: '乙' });
-    const s2 = { roomId: r2.roomId, playerId: j2.playerId, token: j2.token };
+    const s2 = await joinApproved(s1, '乙');
     await post('/api/leave', s1);
     const mid = await post('/api/info', { roomId: r2.roomId });
     if (!mid.exists) throw new Error('还有一个人时房间不该关闭');

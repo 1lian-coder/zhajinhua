@@ -364,9 +364,18 @@ async function main() {
   // ---- 两个机器人玩家 ----
   const bots = [];
   for (const name of BOT_NAMES.slice(0, BOT_COUNT)) {
-    const r = await post('/api/join', { roomId, name });
-    if (!r.ok) throw new Error('机器人加入失败: ' + r.error);
-    bots.push({ name, roomId, playerId: r.playerId, token: r.token });
+    const rq = await post('/api/requestJoin', { roomId, name });
+    if (!rq.ok) throw new Error('机器人申请加入失败: ' + rq.error);
+    const ap = await post('/api/approveJoin', {
+      roomId,
+      playerId: hostSession.playerId,
+      token: hostSession.token,
+      joinId: rq.joinId
+    });
+    if (!ap.ok) throw new Error('房主审批失败: ' + ap.error);
+    const jst = await post('/api/joinStatus', { roomId, joinId: rq.joinId });
+    if (!jst.ok || !jst.playerId) throw new Error('审批状态异常');
+    bots.push({ name, roomId, playerId: jst.playerId, token: jst.playerToken });
   }
   console.log(`✓ ${bots.length} 个机器人已加入`);
 

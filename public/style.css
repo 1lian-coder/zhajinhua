@@ -3315,3 +3315,57 @@ input {
 }
 
 .session-btns { flex-wrap: wrap; }
+
+/* ==================== 加入申请 / 房主审批 ==================== */
+
+.join-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 6px;
+  text-align: center;
+}
+
+.jp-spin { font-size: 32px; animation: jpPulse 1.4s ease-in-out infinite; }
+
+@keyframes jpPulse {
+  0%, 100% { opacity: .55; transform: scale(.94); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+.jp-title { font-size: 15px; font-weight: 700; color: var(--text, #e8e4d8); }
+.jp-room { font-size: 12px; color: var(--muted, #93a9a0); }
+.jp-room b { color: #e8c37a; }
+.jp-note { font-size: 12px; color: var(--muted, #93a9a0); line-height: 1.5; }
+.jp-btns { margin-top: 6px; }
+
+.approve-list { display: flex; flex-direction: column; gap: 8px; }
+
+.approve-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(232, 195, 122, .18);
+}
+
+.approve-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.approve-info b { font-size: 13px; color: var(--text, #e8e4d8); }
+.approve-time { font-size: 10px; color: var(--muted, #93a9a0); font-style: normal; }
+.approve-btns { display: flex; gap: 6px; flex: 0 0 auto; }
+
+#btn-approvals.has-pending {
+  color: #ffcf6b;
+  border-color: rgba(255, 207, 107, .8);
+  box-shadow: 0 0 10px rgba(255, 207, 107, .45);
+  animation: apGlow 1.6s ease-in-out infinite;
+}
+
+@keyframes apGlow {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 207, 107, .35); }
+  50% { box-shadow: 0 0 14px rgba(255, 207, 107, .75); }
+}
