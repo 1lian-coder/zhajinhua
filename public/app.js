@@ -3732,16 +3732,37 @@ var AVATARS = [
       }
     }
 
-    // ---- 每轮局数打满：本房间不能再开下一局，要新开房间 ----
+    // ---- 每轮局数打满：可以继续下一轮（沿用原设置），也可让房主改设置 ----
     if (r.sessionOver) {
       var targetHands = (st.config && st.config.sessionHands) || 0;
-      html += '<div class="session-over">' +
-        '<div class="session-title">🏁 本轮 ' + esc(targetHands || r.handNo) + ' 局已打完</div>' +
-        '<div class="session-sub">本房间不能再开下一局，请新开房间继续</div>' +
-        '<div class="session-btns">' +
-        '<button id="btn-new-room" class="btn btn-primary" type="button">新开房间</button>' +
-        '<button id="btn-finish-round" class="btn btn-ghost" type="button">离开</button>' +
-        '</div></div>';
+      var roundNow = st.roundNo || 1;
+      var waitingNames = (st.nextRoundWaiting || []).map(function (x) { return x.name; });
+      var joinedMine = !!st.myNextRoundJoined;
+      html += '<div class="session-over">';
+      html += '<div class="session-title">🏁 第 ' + esc(roundNow) + ' 轮 ' + esc(targetHands || r.handNo) + ' 局已打完</div>';
+      if (st.nextRoundAt) {
+        html += '<div class="session-sub">⏳ 正在集合玩家开始第 ' + esc(roundNow + 1) + ' 轮，' +
+          '<b id="next-round-count">…</b> 秒后自动开始</div>';
+        if (joinedMine) html += '<div class="nr-note ok">✅ 你已准备进入下一轮</div>';
+        if (waitingNames.length) {
+          html += '<div class="nr-note">还没点「下一轮」的：' + esc(waitingNames.join('、')) +
+            '（不点的话本轮先观战）</div>';
+        }
+      } else {
+        html += '<div class="session-sub">想继续就在本房间开第 ' + esc(roundNow + 1) + ' 轮，局数可以继续按房主的设置</div>';
+        if (joinedMine) html += '<div class="nr-note ok">✅ 你已准备进入下一轮</div>';
+      }
+      html += '<div class="session-btns">';
+      if (!joinedMine) {
+        html += '<button id="btn-next-round" class="btn btn-primary" type="button">开始第 ' + esc(roundNow + 1) + ' 轮</button>';
+      } else {
+        html += '<button id="btn-next-round" class="btn btn-ghost" type="button" disabled>已准备，等待其他人</button>';
+      }
+      if (st.hostId === meId() && !st.spectating) {
+        html += '<button id="btn-edit-config" class="btn btn-ghost" type="button">修改设置（局数等）</button>';
+      }
+      html += '<button id="btn-finish-round" class="btn btn-ghost" type="button">离开</button>';
+      html += '</div></div>';
     }
 
     // ---- 房主：重置所有人积分（从 0 开始）----
@@ -3941,10 +3962,14 @@ var AVATARS = [
       });
     }
 
-    // 本轮打满：新开房间 / 离开
-    var newRoomBtn = panel.querySelector('#btn-new-room');
-    if (newRoomBtn) {
-      newRoomBtn.addEventListener('click', function () { startNewRoom(); });
+    // 本轮打满：开始下一轮 / 修改设置 / 离开
+    var nextRoundBtn = panel.querySelector('#btn-next-round');
+    if (nextRoundBtn) {
+      nextRoundBtn.addEventListener('click', function () { doNextRound(); });
+    }
+    var editCfgBtn = panel.querySelector('#btn-edit-config');
+    if (editCfgBtn) {
+      editCfgBtn.addEventListener('click', function () { doEditConfigInResult(); });
     }
     var finishBtn = panel.querySelector('#btn-finish-round');
     if (finishBtn) {
@@ -4307,8 +4332,15 @@ var AVATARS = [
         primary.hidden = false;
         var roundOver = !!(st.lastResult && st.lastResult.sessionOver);
         primary.disabled = busy;
-        primary.textContent = roundOver ? '新开房间（本轮已结束）' : '下一局';
-        tipText = roundOver ? '本轮局数已打完 · 本房间不能再开，请新开房间' : '本局结束 · 准备下一局';
+        if (roundOver) {
+          primary.textContent = st.nextRoundAt ? '正在集合下一轮…' : ('开始第 ' + ((st.roundNo || 1) + 1) + ' 轮');
+          primary.disabled = busy || !!st.nextRoundAt;
+        } else {
+          primary.textContent = '下一局';
+        }
+        tipText = roundOver
+          ? (st.nextRoundAt ? '等待其他玩家，倒计时结束自动开始新一轮' : '本轮局数已打完 · 可以直接开下一轮，局数也能再改')
+          : '本局结束 · 准备下一局';
       } else {
         actions.hidden = true;
         primary.hidden = false;
@@ -4342,6 +4374,7 @@ var AVATARS = [
     if (!state || currentScreen !== 'table') return;
     var st = state;
     if (st.phase === 'showdown' && st.nextHandAt) updateAutoNextText();
+    if (st.phase === 'showdown' && st.nextRoundAt) updateNextRoundCount();
     var rem = remainingMs();
     var countEl = $('turn-count');
     var tip = $('turn-text');
@@ -4604,11 +4637,52 @@ var AVATARS = [
     });
   }
 
+  /** 结算阶段：点「开始第 N 轮」（30 秒集合等待，没点的人本轮观战） */
+  function doNextRound() {
+    if (!session || busy) return;
+    busy = true;
+    api('/api/nextRound', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) toast((res && res.error) || '开始下一轮失败', 'err');
+      else if (res.nextRoundAt) toast('已准备，等待其他玩家…', 'ok');
+      else toast('下一轮开始（第 ' + res.roundNo + ' 轮）', 'ok');
+    });
+  }
+
+  /** 结算阶段：房主回大厅改设置（局数等），改完点开始就是新一轮 */
+  function doEditConfigInResult() {
+    if (!state) return;
+    var resultEl = document.getElementById('panel-result');
+    if (resultEl) resultEl.hidden = true;
+    var lobbyEl = document.getElementById('panel-lobby');
+    if (lobbyEl) lobbyEl.hidden = false;
+    var fake = Object.assign({}, state);
+    fake.phase = 'lobby';
+    renderLobby(fake);
+    try {
+      if (lobbyEl && lobbyEl.scrollIntoView) {
+        lobbyEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    } catch (e) { /* ignore */ }
+    toast('可以修改局数等设置，改完点「保存设置」，再点「开始」就是新一轮', 'ok');
+  }
+
+  /** 结算界面：下一轮倒计时刷新 */
+  function updateNextRoundCount() {
+    var el = document.getElementById('next-round-count');
+    if (!el || !state || !state.nextRoundAt) return;
+    var left = Math.max(0, Math.round((state.nextRoundAt - state.serverNow) / 1000 - (Date.now() - clock.localAt) / 1000));
+    el.textContent = left > 0 ? String(left) : '0';
+  }
   function doStart() {
     if (!session || busy) return;
-    // 本轮局数已打完：不能再开下一局，直接新开房间
+    // 本轮局数已打完：进入下一轮（沿用原设置），不强制新开房间
     if (state && state.lastResult && state.lastResult.sessionOver) {
-      startNewRoom();
+      doNextRound();
       return;
     }
     setBusy(true);

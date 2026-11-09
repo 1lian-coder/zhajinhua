@@ -1014,6 +1014,15 @@ const api = {
     return { ok: true };
   },
 
+  /** 结算阶段：请求开始下一轮（30 秒集合等待，没点的人本轮观战） */
+  async nextRound(body) {
+    const { room, player } = authPlayer(body);
+    room.requestNextRound(player.id, false);
+    markDirty();
+    broadcast(room);
+    return { ok: true, roundNo: room.roundNo, nextRoundAt: room.nextRoundAt || 0 };
+  },
+
   /** 换座位（大厅/结算阶段；空位可坐，出牌顺序按座位） */
   async setSeat(body) {
     const { room, player } = authPlayer(body);

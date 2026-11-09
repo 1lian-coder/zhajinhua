@@ -3296,3 +3296,22 @@ input {
   color: rgba(232, 195, 122, .75);
   pointer-events: none;
 }
+
+/* ==================== 轮次结算 / 下一轮集合 ==================== */
+
+.nr-note {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted, #93a9a0);
+}
+
+.nr-note.ok { color: #7fe0a8; }
+
+#next-round-count {
+  color: #e8c37a;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.session-btns { flex-wrap: wrap; }

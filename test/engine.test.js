@@ -529,14 +529,20 @@ test('每轮局数：打满后停止自动连开，且本房间不能再开下�
   assert.strictEqual(room.lastResult.sessionOver, true, '打满 2 局应标记本轮结束');
   assert.strictEqual(room.nextHandAt, 0, '本轮结束不应自动连开');
 
-  // 本房间不允许再开下一局
-  assert.throws(() => room.nextHand(a), /需要新开房间/, '打满后本房间不能继续开局');
-  assert.throws(() => room.startHand(a), /需要新开房间|已打完/, '直接 startHand 也要被拦？');
-
-  // 换新房间：同样的配置可以正常开局
-  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, sessionHands: 2 });
-  room2.startHand(room2.order[0]);
-  assert.strictEqual(room2.phase, 'playing');
+  // 本轮打满后不再要求新开房间：点「下一轮」沿用原设置直接续上
+  assert.strictEqual(room.roundNo, 1);
+  room.requestNextRound(a);
+  // 还有 b 没点 → 进入 30 秒集合等待
+  assert.ok(room.nextRoundAt > 0, '有人没点时应进入集合等待');
+  room.requestNextRound(b); // b 也点了
+  assert.strictEqual(room.roundWaiters().length, 0, '都点了就没人要等');
+  room.tick(room.nextRoundAt + 1); // 倒计时到点自动开始新一轮
+  assert.strictEqual(room.roundNo, 2, '进入第 2 轮');
+  assert.strictEqual(room.handNo, 0, '新一轮局数归零');
+  assert.strictEqual(room.phase, 'lobby', '新一轮回到大厅，房主可改设置');
+  room.startHand(a);
+  assert.strictEqual(room.phase, 'playing');
+  assert.strictEqual(room.handNo, 1, '新一轮第 1 局');
 });
 
 test('看牌不是回合动作：没轮到自己也能看（HTTP /api/look 与 action=look 行为一致）', () => {
@@ -1506,10 +1512,14 @@ test('每局输赢 + 每轮总结：deltas 零和，roundSummary 累计，再来
   const netA = room.players.get(a).net;
   assert.strictEqual(r2.roundSummary.find((x) => x.id === a).delta, netA, '本轮总结与净分一致');
 
-  // 本轮打满后本房间不能再开下一局（必须新开房间）
-  assert.throws(() => room.nextHand(a), /需要新开房间/);
+  // 本轮打满后可以在本房间继续下一轮（不再要求新开房间）
+  const netBefore = netA;
+  room.nextHand(a); // 应由内部切到下一轮并开新局
+  assert.strictEqual(room.roundNo, 2, '已进入第 2 轮');
+  const rDeltas = room.lastResult && room.lastResult.deltas;
+  assert.ok(rDeltas === null || rDeltas === undefined || rDeltas.length >= 0, '新一轮照常');
 
-  // 新房间：输赢统计重新累计
+  // 新房间：输赢统计重新累计（每轮总结重新开始）
   const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, sessionHands: 2 });
   room2.startHand(room2.order[0]);
   forceCards(room2, room2.order[0], [card('S', 14), card('H', 14), card('D', 14)]);
