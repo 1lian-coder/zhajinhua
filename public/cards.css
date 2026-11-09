@@ -41,16 +41,16 @@
 /* ------------------------------- 牌背 ------------------------------- */
 
 .pcard-back {
-  border: 2px solid #e9efe9;
+  border: 1px solid rgba(242, 208, 137, .7);
   background:
-    radial-gradient(circle at 50% 50%, rgba(232, 195, 122, .26), rgba(232, 195, 122, 0) 62%),
-    repeating-linear-gradient(45deg, rgba(255, 255, 255, .075) 0 5px, rgba(255, 255, 255, 0) 5px 10px),
-    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .2) 0 5px, rgba(0, 0, 0, 0) 5px 10px),
-    linear-gradient(158deg, #1e6149 0%, #103c2d 55%, #08251c 100%);
+    radial-gradient(circle at 50% 46%, rgba(255, 215, 140, .3), rgba(255, 215, 140, 0) 64%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .16) 0 3px, rgba(255, 255, 255, 0) 3px 9px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .32) 0 3px, rgba(0, 0, 0, 0) 3px 9px),
+    linear-gradient(158deg, #4a3596 0%, #2b1d60 55%, #140d2e 100%);
   box-shadow:
-    inset 0 0 0 2px rgba(8, 37, 28, .95),
-    inset 0 0 0 3px rgba(232, 195, 122, .32),
-    0 3px 8px rgba(0, 0, 0, .38);
+    inset 0 0 0 3px rgba(242, 208, 137, .26),
+    inset 0 0 18px rgba(0, 0, 0, .55),
+    0 4px 12px rgba(0, 0, 0, .5);
   transform: rotateY(0deg);
 }
 
@@ -64,9 +64,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(var(--pcard-w, 74px) * .34);
+  font-size: calc(var(--pcard-w, 74px) * .38);
   line-height: 1;
-  color: rgba(232, 195, 122, .6);
+  color: rgba(255, 224, 155, .82);
   text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
 }
 
@@ -78,9 +78,12 @@
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(120% 90% at 20% 0%, #ffffff 0%, #f4f4ee 62%, #e8e9e1 100%);
-  border: 1px solid rgba(0, 0, 0, .28);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, .35);
+    radial-gradient(120% 90% at 22% 0%, #fffefb 0%, #f7f1e2 58%, #e9dec3 100%);
+  border: 1px solid rgba(150, 118, 58, .5);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, .85),
+    inset 0 -3px 8px rgba(150, 118, 58, .2),
+    0 4px 12px rgba(0, 0, 0, .42);
   color: #191919;
 }
 

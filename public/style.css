@@ -4,10 +4,10 @@
    ========================================================================= */
 
 :root {
-  --bg-deep: #04120e;
-  --felt-1: #175841;
-  --felt-2: #0c3327;
-  --felt-3: #08241b;
+  --bg-deep: #06040f;
+  --felt-1: #4a1626;
+  --felt-2: #350e1a;
+  --felt-3: #1e0710;
   --gold: #e8c37a;
   --gold-soft: rgba(232, 195, 122, .16);
   --gold-line: rgba(232, 195, 122, .42);
@@ -41,7 +41,7 @@ body {
   width: 100%;
   overflow-x: hidden;
   overflow-y: hidden;
-  background: #04120e;
+  background: #06040f;
 }
 
 body {
@@ -52,7 +52,10 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   background:
-    radial-gradient(120% 85% at 50% 0%, #143c2d 0%, #0a241b 46%, #04120e 100%);
+    radial-gradient(120% 80% at 50% -10%, rgba(94, 60, 180, .55) 0%, rgba(28, 16, 72, .9) 42%, #06040f 100%),
+    radial-gradient(90% 60% at 85% 100%, rgba(160, 60, 110, .34) 0%, transparent 62%),
+    radial-gradient(70% 50% at 8% 92%, rgba(30, 120, 130, .26) 0%, transparent 60%),
+    #06040f;
   overscroll-behavior: none;
 }
 
@@ -105,8 +108,7 @@ input {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background:
-    radial-gradient(120% 70% at 50% 0%, #123b2c 0%, #0a241b 48%, #061410 100%);
+  background: transparent;
 }
 
 .screen {
@@ -3368,4 +3370,477 @@ input {
 @keyframes apGlow {
   0%, 100% { box-shadow: 0 0 6px rgba(255, 207, 107, .35); }
   50% { box-shadow: 0 0 14px rgba(255, 207, 107, .75); }
+}
+
+/* =========================================================================
+   视觉美化层（纯手写 CSS，零依赖，不加载任何外部图片/字体）
+   —— 在原有样式之上做覆盖，只改观感，不动布局
+   ========================================================================= */
+
+:root {
+  /* 夜色：墨紫 → 深蓝黑，比纯绿更有层次 */
+  --bg-deep: #0a0618;
+  --night-1: #1b1140;
+  --night-2: #0e0a26;
+  --night-3: #06040f;
+  /* 牌桌绒布：红木桌 + 深酒红绒面（暖调，和金色更搭） */
+  --felt-1: #4a1626;
+  --felt-2: #350e1a;
+  --felt-3: #1e0710;
+  /* 金色更亮一点，形成金箔感 */
+  --gold: #f2d089;
+  --gold-bright: #ffe9b0;
+  --gold-deep: #b8924a;
+  --gold-soft: rgba(242, 208, 137, .16);
+  --gold-line: rgba(242, 208, 137, .5);
+  /* 强调色：保留绿作为“赢”，加青色作为“行动中” */
+  --green: #5ce89b;
+  --cyan: #55d7d0;
+  --red: #ff8072;
+  --text: #f2ecdd;
+  --muted: #a99fbf;
+  --dim: #6f6688;
+  --line: rgba(255, 240, 200, .12);
+  --line-strong: rgba(255, 240, 200, .24);
+  --panel: rgba(28, 20, 54, .62);
+  --panel-2: rgba(0, 0, 0, .34);
+}
+
+/* ---------- 背景：夜空中带扑克花色水印 ---------- */
+
+body {
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(94, 60, 180, .55) 0%, rgba(28, 16, 72, .9) 42%, #06040f 100%),
+    radial-gradient(90% 60% at 85% 100%, rgba(160, 60, 110, .34) 0%, transparent 62%),
+    radial-gradient(70% 50% at 8% 92%, rgba(30, 120, 130, .26) 0%, transparent 60%),
+    #06040f;
+  background-attachment: fixed;
+}
+
+/* 花色水印：用 SVG（内联 data URI，零请求）铺一层极淡的 ♠♥♣♦ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: .1;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'><g font-size='34' fill='%23f2d089' text-anchor='middle'><text x='30' y='44'>&#9824;</text><text x='90' y='44'>&#9829;</text><text x='30' y='104'>&#9827;</text><text x='90' y='104'>&#9830;</text></g></svg>");
+  background-size: 160px 160px;
+  background-repeat: repeat;
+}
+
+/* 顶层金色光斑，增强氛围 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(46% 26% at 50% 0%, rgba(242, 208, 137, .16) 0%, transparent 70%),
+    radial-gradient(40% 22% at 12% 78%, rgba(94, 200, 210, .1) 0%, transparent 70%);
+}
+
+/* 让所有实际内容浮在装饰层之上 */
+.screen,
+.home-wrap,
+.topbar,
+.table-main {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 牌桌：红木桌框 + 绒布纹理 + 金线 ---------- */
+
+.table-oval {
+  background:
+    /* 中心柔光 */
+    radial-gradient(62% 48% at 50% 40%, rgba(255, 214, 150, .12) 0%, transparent 62%),
+    /* 绒布细密纹理（两个方向交错） */
+    repeating-linear-gradient(48deg, rgba(255, 255, 255, .028) 0 2px, transparent 2px 5px),
+    repeating-linear-gradient(-42deg, rgba(0, 0, 0, .16) 0 2px, transparent 2px 6px),
+    /* 绒布本体 */
+    radial-gradient(118% 92% at 50% 6%, var(--felt-1) 0%, var(--felt-2) 58%, var(--felt-3) 100%);
+  border: 8px solid transparent;
+  border-image: linear-gradient(145deg, #6b4a28 0%, #3a2414 30%, #8a6136 55%, #2c1a0e 80%, #5a3d20 100%) 1;
+  box-shadow:
+    inset 0 0 60px rgba(0, 0, 0, .62),
+    inset 0 2px 0 rgba(255, 235, 190, .16),
+    inset 0 -2px 0 rgba(0, 0, 0, .5),
+    0 16px 44px rgba(0, 0, 0, .6),
+    0 0 0 2px rgba(242, 208, 137, .32),
+    0 0 30px rgba(242, 208, 137, .2);
+}
+
+/* 绒布内圈金线 */
+.table-oval::before {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: inherit;
+  border: 1px solid rgba(242, 208, 137, .28);
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, .3);
+  pointer-events: none;
+}
+
+/* ---------- 顶栏：玻璃拟态 + 金线 ---------- */
+
+.topbar {
+  background:
+    linear-gradient(180deg, rgba(46, 30, 84, .9) 0%, rgba(16, 10, 34, .88) 100%);
+  border-bottom: 1px solid rgba(242, 208, 137, .26);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* ---------- 面板 / 卡片：玻璃 + 金边 + 顶部高光 ---------- */
+
+.panel,
+.box {
+  background:
+    linear-gradient(180deg, rgba(52, 36, 92, .58) 0%, rgba(18, 12, 38, .72) 100%);
+  border: 1px solid rgba(242, 208, 137, .22);
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 200, .14),
+    0 10px 28px rgba(0, 0, 0, .42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ---------- 按钮：金箔立体感 ---------- */
+
+.btn-primary {
+  background: linear-gradient(160deg, #f7dda2 0%, #e2b96d 42%, #c2954a 100%);
+  color: #2b1707;
+  border: 1px solid rgba(255, 245, 210, .7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .55),
+    inset 0 -2px 6px rgba(90, 55, 12, .45),
+    0 6px 18px rgba(242, 208, 137, .3);
+  font-weight: 800;
+  letter-spacing: .3px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
+}
+
+.btn-primary:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 8px rgba(90, 55, 12, .55),
+    0 3px 10px rgba(242, 208, 137, .24);
+}
+
+.btn-ghost {
+  background: rgba(255, 240, 200, .07);
+  border: 1px solid rgba(242, 208, 137, .3);
+  color: var(--gold-bright);
+}
+
+
+
+/* 牌背：菱形织纹 + 金色边框 */
+.card.back,
+.mini-card.back,
+.card-down {
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .1) 0 3px, transparent 3px 8px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .28) 0 3px, transparent 3px 8px),
+    radial-gradient(70% 70% at 50% 40%, #3b2a72 0%, #241a4c 62%, #170f33 100%);
+  border: 1px solid rgba(242, 208, 137, .55);
+  box-shadow:
+    inset 0 0 0 3px rgba(242, 208, 137, .2),
+    inset 0 0 18px rgba(0, 0, 0, .5),
+    0 4px 12px rgba(0, 0, 0, .5);
+}
+
+/* 牌背中央的金色菱形 */
+.card.back::after,
+.mini-card.back::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42%;
+  aspect-ratio: 1 / 1.4;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1px solid rgba(242, 208, 137, .5);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+/* ---------- 座位：头像光圈 + 昵称衬底 ---------- */
+
+.seat-avatar {
+  box-shadow:
+    inset 0 0 0 2px rgba(242, 208, 137, .45),
+    0 6px 16px rgba(0, 0, 0, .5);
+}
+
+.seat.turn .seat-avatar {
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 233, 176, .9),
+    0 0 0 3px rgba(242, 208, 137, .35),
+    0 0 22px rgba(255, 207, 107, .65);
+}
+
+.seat.turn {
+  filter: drop-shadow(0 0 12px rgba(255, 207, 107, .45));
+}
+
+.seat-name {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .85);
+}
+
+/* ---------- 朱红庄家徽记 ---------- */
+
+.seat.dealer-seat .seat-avatar {
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 120, 110, .85),
+    0 0 16px rgba(255, 96, 86, .5);
+}
+
+/* ---------- 台心：底池数字金色发光 ---------- */
+
+.pot-row .pot-num,
+.pot-num,
+.big-pot {
+  color: var(--gold-bright);
+  text-shadow:
+    0 0 14px rgba(255, 207, 107, .55),
+    0 2px 4px rgba(0, 0, 0, .7);
+}
+
+/* ---------- 我的信息条：深色玻璃 + 金边 ---------- */
+
+.my-seat,
+#my-seat {
+  background:
+    linear-gradient(180deg, rgba(56, 40, 100, .55) 0%, rgba(14, 9, 30, .78) 100%);
+  border: 1px solid rgba(242, 208, 137, .3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 200, .16),
+    0 8px 22px rgba(0, 0, 0, .45);
+}
+
+/* ---------- 动作气泡：更有层次 ---------- */
+
+.action-pop {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .55);
+}
+
+/* ---------- 结算面板：金色标题 ---------- */
+
+.result-cap,
+.sec-title {
+  color: var(--gold-bright);
+  text-shadow: 0 0 10px rgba(255, 207, 107, .3);
+}
+
+/* ---------- 首页大标题：金色渐变字 ---------- */
+
+.home-title,
+.home h1,
+.brand-title {
+  background: linear-gradient(180deg, #fff3cf 0%, #f2d089 45%, #c2954a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .5));
+}
+
+/* ---------- 输入框：深色内嵌 ---------- */
+
+.input,
+input[type="text"],
+input[type="number"],
+input[type="password"] {
+  background: rgba(0, 0, 0, .4);
+  border: 1px solid rgba(242, 208, 137, .26);
+  color: var(--text);
+}
+
+.input:focus,
+input:focus {
+  border-color: rgba(242, 208, 137, .7);
+  box-shadow: 0 0 0 3px rgba(242, 208, 137, .16);
+  outline: none;
+}
+
+/* ---------- 滚动条 ---------- */
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: rgba(0, 0, 0, .3); }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(242, 208, 137, .5), rgba(184, 146, 74, .35));
+  border-radius: 99px;
+}
+
+/* ---------- 修正：真实卡牌 class 名为 pcard ---------- */
+
+.pcard-face {
+  background: linear-gradient(158deg, #fffdf8 0%, #f6edd9 58%, #e8dbba 100%);
+  border: 1px solid rgba(120, 92, 42, .5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .95),
+    inset 0 -2px 7px rgba(120, 92, 42, .24),
+    0 5px 14px rgba(0, 0, 0, .48);
+}
+
+.pcard-back {
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .13) 0 3px, transparent 3px 9px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .3) 0 3px, transparent 3px 9px),
+    radial-gradient(72% 72% at 50% 38%, #45318a 0%, #2a1c58 58%, #150e2e 100%);
+  border: 1px solid rgba(242, 208, 137, .65);
+  box-shadow:
+    inset 0 0 0 3px rgba(242, 208, 137, .22),
+    inset 0 0 20px rgba(0, 0, 0, .55),
+    0 5px 14px rgba(0, 0, 0, .5);
+}
+
+/* 牌背中央金色花纹 */
+.pcard-back::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46%;
+  height: 62%;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1px solid rgba(242, 208, 137, .55);
+  border-radius: 3px;
+  box-shadow: inset 0 0 10px rgba(242, 208, 137, .2);
+  pointer-events: none;
+}
+
+/* 花色符号更醒目 */
+.pcard-face .pc-suit,
+.pcard-face .s {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .2));
+}
+
+/* ---------- 修正：顶栏（6 个按钮太挤，收紧尺寸） ---------- */
+
+.topbar {
+  gap: 6px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.icon-btn {
+  min-width: 34px;
+  padding: 5px 8px;
+  font-size: 12px;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+
+.topbar-actions { gap: 5px; }
+
+#room-id,
+.topbar-left { flex: 0 1 auto; min-width: 0; }
+
+#room-id { font-size: 15px; }
+
+/* 小屏更紧凑 */
+@media (max-width: 380px) {
+  .topbar { gap: 4px; padding-left: 8px; padding-right: 8px; }
+  .icon-btn { min-width: 30px; padding: 4px 6px; font-size: 11px; }
+  .topbar-actions { gap: 4px; }
+}
+
+/* ==================== 精修：台心 / 筹码 / 座位 ==================== */
+
+/* 台心：加一层柔和金晕，让底池成为视觉焦点 */
+#table-center {
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .6);
+}
+
+#table-center .pot-num,
+#table-center .big-pot {
+  font-size: 34px;
+  letter-spacing: 1px;
+}
+
+/* 庄家标识：金色描边 + 柔光 */
+.dealer-tag,
+.dealer-line {
+  color: var(--gold-bright);
+  text-shadow: 0 0 10px rgba(255, 207, 107, .45);
+}
+
+/* 筹码按钮：统一金色-紫金渐变（去掉刺眼的纯紫） */
+.chip-raise {
+  background: linear-gradient(160deg, #6d4fc4 0%, #4b3392 62%, #33206b 100%);
+  border: 1px solid rgba(242, 208, 137, .55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .28),
+    0 5px 14px rgba(0, 0, 0, .45);
+  color: #f7eccf;
+}
+
+.chip-raise-2 {
+  background: linear-gradient(160deg, #5238a8 0%, #3a2578 62%, #251858 100%);
+}
+
+.chip-call {
+  background: linear-gradient(160deg, #f7dda2 0%, #e0b567 58%, #bd8f45 100%);
+  border: 1px solid rgba(255, 245, 210, .75);
+  color: #2b1707;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .6),
+    0 6px 16px rgba(242, 208, 137, .32);
+}
+
+.chip-call b, .chip-raise b { text-shadow: 0 1px 2px rgba(0, 0, 0, .55); }
+.chip-call b { text-shadow: 0 1px 0 rgba(255, 255, 255, .4); }
+
+/* 弃 / 看 / 比 圆按钮：加内圈光泽 */
+.round-btn {
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, .28),
+    inset 0 -6px 14px rgba(0, 0, 0, .35),
+    0 6px 16px rgba(0, 0, 0, .42);
+}
+
+/* 座位昵称底衬：可读性更好 */
+.seat-name {
+  background: linear-gradient(180deg, rgba(0, 0, 0, .55), rgba(0, 0, 0, .72));
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+
+/* 空座位：更淡的虚线 + 悬停高亮 */
+.seat.empty {
+  border-color: rgba(242, 208, 137, .38);
+  background: rgba(28, 16, 52, .5);
+}
+
+.seat.empty:active,
+.seat.empty:hover {
+  background: rgba(242, 208, 137, .14);
+  border-color: rgba(242, 208, 137, .85);
+}
+
+.seat-empty-plus { color: var(--gold-bright); text-shadow: 0 0 8px rgba(255, 207, 107, .5); }
+
+/* 下注提示条（轮到你） */
+.turn-bar, .turn-text {
+  color: var(--gold-bright);
+}
+
+/* 面板标题统一金色 */
+.sec-title, .box-head h2, .panel-title {
+  color: var(--gold-bright);
+}
+
+/* 徽标：庄/房主/人机 更有质感 */
+.badge {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
 }
