@@ -1057,7 +1057,11 @@ var AVATARS = [
         scheduleVerify(4000);
         return;
       }
-      handleSessionInvalid((res && res.error) || '房间已失效，请重新加入');
+      var errMsg = (res && res.error) || '房间已失效，请重新加入';
+      if (errMsg.indexOf('身份验证失败') >= 0) {
+        errMsg = '你已经不在这个房间里了（可能退出过）。可以输入房号重新「参与」或「观战」进入。';
+      }
+      handleSessionInvalid(errMsg);
     }, function () {
       verifyBusy = false;
       scheduleVerify(4000);
@@ -3323,9 +3327,38 @@ var AVATARS = [
       if (myArea) myArea.classList.add('spectating');
       return;
     }
-    if (banner) banner.hidden = true;
+    // 本局不参与（点了「观战」）：也显示观战提示，但仍是房间成员
+    var sitOutNow = !!st.mySitOut && !st.spectating;
+    if (banner) {
+      if (sitOutNow) {
+        banner.hidden = false;
+        banner.innerHTML = '👁 本局观战中（未参与）· 想看牌点下方「参与」';
+      } else {
+        banner.hidden = true;
+      }
+    }
     var myAreaEl = $('my-area');
-    if (myAreaEl) myAreaEl.classList.remove('spectating');
+    if (myAreaEl) {
+      if (sitOutNow) myAreaEl.classList.add('spectating');
+      else myAreaEl.classList.remove('spectating');
+    }
+    if (sitOutNow) {
+      // 本局不参与：隐藏牌区、禁用操作，但保留座位信息与「参与」按钮
+      var cardsBlock = $('my-cards-block');
+      if (cardsBlock) cardsBlock.hidden = true;
+      if (me) {
+        $('my-name').textContent = me.name || '我';
+        paintAvatar($('my-avatar-face'), st.myAvatar, me.name, me.id);
+        var myNetEl2 = $('my-net');
+        if (myNetEl2) {
+          myNetEl2.textContent = fmtSigned(me.net);
+          myNetEl2.className = 'my-net ' + (me.net > 0 ? 'pos' : (me.net < 0 ? 'neg' : 'zero'));
+        }
+        var seatNoEl2 = $('my-seatno');
+        if (seatNoEl2) seatNoEl2.textContent = Number.isInteger(me.seat) ? (me.seat + 1) + '号' : '-';
+      }
+      return;
+    }
 
     // 我的座位信息（始终显示；大厅也显示，方便看自己筹码）
     if (me) {
