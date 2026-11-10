@@ -1467,6 +1467,18 @@ var AVATARS = [
         cls = 'pop-allin';
         label = '孤注一掷';
         say = m[1] + ' 全下';
+      } else if ((m = text.match(/^(.{1,12}?) 约 (.{1,12}?) 比牌，(.{1,12}?) 出局/))) {
+        pid = pidByName(st, m[1]);
+        cls = 'pop-compare';
+        label = '比牌';
+        say = m[1] + ' 和 ' + m[2] + ' 比牌，' + m[3] + ' 出局';
+        // 自己参与了这次比牌：结果面板会专门播「你赢了/你输了」，这里不重复念
+        var myNameNow = (function () {
+          var all = st.players || [];
+          for (var ii = 0; ii < all.length; ii++) if (all[ii].id === meId()) return all[ii].name;
+          return '';
+        })();
+        if (myNameNow && (myNameNow === m[1] || myNameNow === m[2])) say = '';
       } else if ((m = text.match(/^(.{1,12}?) 约 .+? 比牌/))) {
         pid = pidByName(st, m[1]);
         cls = 'pop-compare';
@@ -1791,6 +1803,11 @@ var AVATARS = [
     panel.innerHTML = html;
     panel.hidden = false;
     panel.className = 'compare-panel show';
+    // 语音播报比牌输赢（用当前语音）；日志播报可能刚念过，这里只说结果补充
+    var cmpSay = iWin
+      ? ('比牌你赢了，' + otherName + ' 出局')
+      : ('比牌你输了，你出局了');
+    speakQueued(cmpSay);
     var closeBtn = panel.querySelector('#btn-close-compare');
     if (closeBtn) closeBtn.addEventListener('click', function () { panel.hidden = true; });
     if (compareTimer) clearTimeout(compareTimer);
