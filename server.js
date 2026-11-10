@@ -961,7 +961,9 @@ const api = {
     if (rateLimited('join', 30)) throw userError('操作太频繁，请稍后再试');
     if (totalPlayerCount() >= MAX_TOTAL_PLAYERS) throw userError('服务器人数已满，请稍后再试');
     const room = getRoomOrThrow(body.roomId);
-    if (room.players.size >= MAX_PLAYERS) throw userError(`房间已满（最多 ${MAX_PLAYERS} 人）`);
+    if (room.activePlayers().length >= MAX_PLAYERS) {
+      throw userError('参与位已满（最多 ' + MAX_PLAYERS + ' 人打牌，可以选观战加入）');
+    }
     // 房间密码校验（防猜：全局计数，10 分钟窗口 20 次）
     if (room.joinPin) {
       if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
@@ -985,8 +987,8 @@ const api = {
     if (rateLimited('join', 30)) throw userError('操作太频繁，请稍后再试');
     if (totalPlayerCount() >= MAX_TOTAL_PLAYERS) throw userError('服务器人数已满，请稍后再试');
     const room = getRoomOrThrow(body.roomId);
-    if (room.players.size + room.pendingJoins.size >= MAX_PLAYERS) {
-      throw userError(`房间已满（最多 ${MAX_PLAYERS} 人）`);
+    if (room.activePlayers().length + room.pendingCount() >= MAX_PLAYERS) {
+      throw userError('参与位已满（最多 ' + MAX_PLAYERS + ' 人打牌，可以选观战加入）');
     }
     if (room.joinPin) {
       if (pinLocked()) throw userError('密码错误次数太多，请 10 分钟后再试');
@@ -1074,6 +1076,33 @@ const api = {
   async resetScores(body) {
     const { room, player } = authPlayer(body);
     room.resetScores(player.id);
+    markDirty();
+    broadcast(room);
+    return { ok: true };
+  },
+
+  /** 房主指定把房主身份交给谁 */
+  async transferHost(body) {
+    const { room, player } = authPlayer(body);
+    const name = room.transferHost(player.id, body.target);
+    markDirty();
+    broadcast(room);
+    return { ok: true, name };
+  },
+
+  /** 房主指定接班人（离开时生效） */
+  async setHostHeir(body) {
+    const { room, player } = authPlayer(body);
+    room.setHostHeir(player.id, body.target || null);
+    markDirty();
+    broadcast(room);
+    return { ok: true, heir: room.hostHeir || null };
+  },
+
+  /** 房间无房主时接管 */
+  async claimHost(body) {
+    const { room, player } = authPlayer(body);
+    room.claimHost(player.id);
     markDirty();
     broadcast(room);
     return { ok: true };

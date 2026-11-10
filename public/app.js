@@ -1831,10 +1831,38 @@ var AVATARS = [
       if (canKick) {
         html += '<button class="btn btn-ghost btn-small" id="pd-kick" type="button">踢出房间</button>';
       }
+      // 房主可以把房主身份转给这个真人
+      if (amHost && !p.isBot && (st.phase === 'lobby' || st.phase === 'showdown')) {
+        html += '<button class="btn btn-primary btn-small" id="pd-transfer" type="button">转让房主给他</button>';
+      }
     }
     html += '<div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">关闭</button></div>';
 
     var root = showModal(html, { title: isSelf ? '我的信息' : '玩家信息' });
+    var transferBtn = root.querySelector('#pd-transfer');
+    if (transferBtn) {
+      transferBtn.addEventListener('click', function () {
+        closeModal();
+        confirmDialog({
+          title: '转让房主',
+          message: '把房主身份转给「' + p.name + '」？转让后你将变成普通玩家（审批、改设置、开局都由他负责）。',
+          okText: '转让',
+          danger: true
+        }).then(function (ok) {
+          if (!ok) return;
+          api('/api/transferHost', {
+            roomId: session.roomId,
+            playerId: session.playerId,
+            token: session.token,
+            target: pid
+          }).then(function (res2) {
+            if (!res2 || !res2.ok) toast((res2 && res2.error) || '转让失败', 'err');
+            else toast('已把房主转给 ' + (res2.name || '') , 'ok');
+          });
+        });
+      });
+    }
+
     var kickBtn = root.querySelector('#pd-kick');
     if (kickBtn) {
       kickBtn.addEventListener('click', function () {
@@ -3048,8 +3076,10 @@ var AVATARS = [
     tag.className = 'phase-tag ' + (st.phase || '');
 
     // 台面中央：底池/单注/局数/庄家头像
+    var seatedNow = Number(st.seatCount) || (players || []).filter(function (p2) { return !p2.sitOut; }).length;
+    var roomTotal = (players || []).length;
     $('center-phase').textContent = st.phase === 'lobby'
-      ? '等待开局 · ' + players.length + '/' + maxPlayers
+      ? ('等待开局 · ' + seatedNow + '/' + maxPlayers + (roomTotal > seatedNow ? '（' + roomTotal + ' 人在房间）' : ''))
       : st.phase === 'bidding'
         ? '抢庄中'
         : st.phase === 'showdown' ? '本局结束' : '下注中';
@@ -3170,14 +3200,16 @@ var AVATARS = [
     var seatArr = st.seats || [];
     var isSpectating = !!st.spectating;
     // 8 个固定座位：我在哪个座位，就从我的下一位开始顺时针排（把自己固定在底部）
+    var totalSeats = Number(st.maxSeats) || 8;
     var slots = [];
     if (me && Number.isInteger(me.seat)) {
-      for (var off = 1; off < 8; off++) {
-        var si = (me.seat + off) % 8;
+      for (var off = 1; off < totalSeats; off++) {
+        var si = (me.seat + off) % totalSeats;
         slots.push({ seat: si, pid: seatArr[si] || null });
       }
     } else {
-      for (var s = 0; s < 8; s++) slots.push({ seat: s, pid: seatArr[s] || null });
+      // 我是观战/不占座位：按顺序显示全部座位
+      for (var s2 = 0; s2 < totalSeats; s2++) slots.push({ seat: s2, pid: seatArr[s2] || null });
     }
     var n = slots.length;
     seatMode = seatModeFor(n);
@@ -3294,6 +3326,8 @@ var AVATARS = [
   /** 点击空座位：坐过去（换座位会改变出牌顺序） */
   function tryMoveSeat(seatNo) {
     if (!session || !state || busy) return;
+    if (state.mySitOut) { toast('你在观战，先点「参与」再换座位', 'err'); return; }
+    if (state.freeSeats === 0 && !Number.isInteger(state.mySeat)) { toast('参与位已满', 'err'); return; }
     if (state.spectating) { toast('观战模式不能坐座位，先加入牌局', 'err'); return; }
     if (state.phase !== 'lobby' && state.phase !== 'showdown') {
       toast('牌局进行中不能换座位，等本局结束再换', 'err');
@@ -3349,6 +3383,8 @@ var AVATARS = [
       if (me) {
         $('my-name').textContent = me.name || '我';
         paintAvatar($('my-avatar-face'), st.myAvatar, me.name, me.id);
+        var seatNoEl3 = $('my-seatno');
+        if (seatNoEl3) seatNoEl3.textContent = '观战中';
         var myNetEl2 = $('my-net');
         if (myNetEl2) {
           myNetEl2.textContent = fmtSigned(me.net);
@@ -3370,7 +3406,9 @@ var AVATARS = [
         myChipsEl.className = 'my-net ' + (me.net > 0 ? 'pos' : (me.net < 0 ? 'neg' : 'zero'));
       }
       var seatNoEl = $('my-seatno');
-      if (seatNoEl) seatNoEl.textContent = Number.isInteger(me.seat) ? (me.seat + 1) + '号' : '-';
+      if (seatNoEl) {
+        seatNoEl.textContent = Number.isInteger(me.seat) ? (me.seat + 1) + '号' : (st.mySitOut ? '观战中' : '-');
+      }
       $('my-bet').textContent = fmtChips(me.bet || 0);
       var myNet = $('my-net');
       myNet.textContent = fmtSigned(me.net);
@@ -3578,7 +3616,7 @@ var AVATARS = [
       var addBtn = $('btn-add-bot');
       if (addBtn) addBtn.disabled = !isHost || players.length >= (st.maxPlayers || 8) || busy;
       var cnt = $('bots-count');
-      if (cnt) cnt.textContent = players.length + '/' + (st.maxPlayers || 8) + ' 个座位';
+      if (cnt) cnt.textContent = (Number(st.seatCount) || players.length) + '/' + (st.maxPlayers || 8) + ' 个参与位' + (players.length > (Number(st.seatCount) || 0) ? '（含观战 ' + (players.length - (Number(st.seatCount) || 0)) + ' 人）' : '');
       return;
     }
     botsSig = sig;
@@ -3621,7 +3659,7 @@ var AVATARS = [
       addBtn2.textContent = isHost ? '+ 添加人机' : '只有房主能添加人机';
     }
     var cnt2 = $('bots-count');
-    if (cnt2) cnt2.textContent = players.length + '/' + (st.maxPlayers || 8) + ' 个座位';
+    if (cnt2) cnt2.textContent = (Number(st.seatCount) || players.length) + '/' + (st.maxPlayers || 8) + ' 个参与位' + (players.length > (Number(st.seatCount) || 0) ? '（含观战 ' + (players.length - (Number(st.seatCount) || 0)) + ' 人）' : '');
     var hint = $('bots-hint');
     if (hint) {
       hint.textContent = humans <= 1 ? '一个人也能玩：加人机开局吧' : '人机会自动出牌，适合凑人数';
@@ -4457,6 +4495,25 @@ var AVATARS = [
         var allReady = !!st.allReady && enough;
         var myReady = !!st.myReady;
         // 开局倒计时中：任何人可以取消或切参与/观战
+        // 我自己在观战：底部按钮直接给「参与」
+        if (st.mySitOut && !st.spectating) {
+          primary.disabled = busy;
+          primary.textContent = '参与（回到牌局）';
+          tipText = '你在观战 · 点「参与」马上回到打牌';
+          $('turn-text').textContent = tipText;
+          updateActionButtons(st);
+          return;
+        }
+
+        // 房间无房主：任何真人可以接管
+        if (st.hasHost === false && !st.spectating) {
+          primary.disabled = busy;
+          primary.textContent = '接管房主';
+          tipText = '原房主已离开，点「接管房主」来管理这个房间';
+          $('turn-text').textContent = tipText;
+          updateActionButtons(st);
+          return;
+        }
         if (st.startAt) {
           primary.disabled = false;
           primary.textContent = isHost ? '取消开局' : '倒计时中…';
@@ -4996,6 +5053,21 @@ var AVATARS = [
   function doUnready() {
     doReady(false);
   }
+  /** 房间无房主时接管 */
+  function doClaimHost() {
+    if (!session || busy) return;
+    busy = true;
+    api('/api/claimHost', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) toast((res && res.error) || '接管失败', 'err');
+      else toast('你已成为房主，可以审批、改设置、开局', 'ok');
+    });
+  }
+
   /** 房主取消开局倒计时 */
   function doCancelStart() {
     if (!session || busy) return;
@@ -5021,6 +5093,29 @@ var AVATARS = [
 
   function doStart() {
     if (!session || state === null) return;
+    // 自己在观战：点主按钮 = 切回参与
+    if (state.mySitOut && !state.spectating) {
+      busy = true;
+      api('/api/sitOut', {
+        roomId: session.roomId,
+        playerId: session.playerId,
+        token: session.token,
+        sitOut: false
+      }).then(function (res) {
+        busy = false;
+        if (!res || !res.ok) toast((res && res.error) || '切回参与失败', 'err');
+        else toast('已回到牌局', 'ok');
+        if (state) renderBottom(state);
+      });
+      return;
+    }
+
+    // 房间无房主：点底部按钮 = 接管房主
+    if (state.hasHost === false) {
+      doClaimHost();
+      return;
+    }
+
     // 大厅阶段：非房主点「准备」，房主点「开始游戏」（进阶为倒计时/取消）
     if (state.phase === 'lobby') {
       var isHost = state.hostId === meId();
@@ -5101,9 +5196,16 @@ var AVATARS = [
   }
 
   function doExit() {
+    var st = state;
+    var amHost = st && st.hostId === meId();
+    var others = st ? (st.players || []).filter(function (p2) { return p2.id !== meId() && !p2.isBot; }) : [];
+    var msg = '退出后本局视为弃牌，累计积分会保留。';
+    if (amHost && others.length) {
+      msg = '你是房主。退出前建议先把房主「转让」给某个人，否则房间会变成无房主（其他人需要点「接管房主」）。';
+    }
     confirmDialog({
       title: '退出房间',
-      message: '退出后本局视为弃牌，累计积分会保留。确定退出？',
+      message: msg + ' 确定退出？',
       okText: '退出',
       danger: true
     }).then(function (ok) {

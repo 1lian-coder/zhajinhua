@@ -153,11 +153,22 @@ test('牌面 label 正确', () => {
 
 // ---------------------------------------------------------------- 房间规则
 
-test('房间人数上限 8 人，第 9 人被拒绝', () => {
+test('参与位上限 8 人：第 9 个参与被拒，但可以选观战加入（不含观战者）', () => {
   const room = new Room('000001', QUIET);
   for (let i = 0; i < 8; i++) room.addPlayer('P' + (i + 1));
-  assert.strictEqual(room.players.size, 8);
-  assert.throws(() => room.addPlayer('P9'), /房间已满/);
+  assert.strictEqual(room.activePlayers().length, 8, '8 个参与位已满');
+  assert.strictEqual(room.freeSeats(), 0);
+  assert.throws(() => room.addPlayer('P9'), /参与位已满/);
+  // 观战方式仍可加入，不占参与位
+  const watcher = room.addPlayer('观战者', { sitOut: true });
+  assert.ok(watcher.id);
+  assert.strictEqual(room.activePlayers().length, 8, '观战不占参与位');
+  assert.strictEqual(room.players.size, 9, '房间总人数可以到 9');
+  assert.strictEqual(watcher.seat, null, '观战者不占座位');
+  // 房间总人数仍有上限
+  room.addPlayer('观战2', { sitOut: true });
+  assert.strictEqual(room.players.size, 10);
+  assert.throws(() => room.addPlayer('观战3', { sitOut: true }), /房间总人数已满/);
 });
 
 test('8 人开局：52 张牌每人 3 张足够，底池与战绩正确', () => {
@@ -307,12 +318,34 @@ test('玩家中途退出不会卡住牌局', () => {
   room.act(room.turnId, 'call');
 });
 
-test('房主退出后自动移交房主', () => {
+test('房主退出不自动移交：无指定则无房主，指定接班人则按指定移交', () => {
+  // A) 房主直接退出且没指定接班人 → 房间变成无房主，其他玩家可以接管
   const room = newRoom(3, QUIET);
   const host = room.hostId;
+  const others = room.order.filter((id) => id !== host);
   room.removePlayer(host);
-  assert.notStrictEqual(room.hostId, host);
-  assert.ok(room.players.has(room.hostId));
+  assert.strictEqual(room.hostId, null, '不应自动移交给别人');
+  assert.strictEqual(room.players.size, 2);
+  // 任一真人可接管
+  room.claimHost(others[0]);
+  assert.strictEqual(room.hostId, others[0], '接管后成为房主');
+
+  // B) 房主离开前指定接班人 → 按指定移交
+  const room2 = newRoom(3, QUIET);
+  const h2 = room2.hostId;
+  const o2 = room2.order.filter((id) => id !== h2);
+  room2.setHostHeir(h2, o2[1]); // 指定第三个
+  room2.removePlayer(h2);
+  assert.strictEqual(room2.hostId, o2[1], '按指定移交给接班人');
+
+  // C) 主动转让房主
+  const room3 = newRoom(3, QUIET);
+  const h3 = room3.hostId;
+  const tgt = room3.order.filter((id) => id !== h3)[0];
+  room3.transferHost(h3, tgt);
+  assert.strictEqual(room3.hostId, tgt);
+  // 非房主不能转让
+  assert.throws(() => room3.transferHost(h3, tgt), /只有房主/);
 });
 
 test('配置越界会被 clamp 到合法范围', () => {
@@ -1795,3 +1828,85 @@ test('准备机制：观战者和人机不需要准备；取消准备生效', ()
   assert.strictEqual(room.allReady(), false);
   assert.throws(() => room.startHand(a.id), /还有 2 人没准备|没准备/);
 });
+
+
+test('房主观战时不占参与位：8 个玩家可以全部参与', () => {
+  const room = new Room('seat8', { ...QUIET, turnSeconds: 0 });
+  const host = room.addPlayer('房主');
+  // 房主切观战 → 让出座位
+  room.setSitOut(host.id, true);
+  assert.strictEqual(host.sitOut, true);
+  assert.strictEqual(host.seat, null, '观战时不占座位');
+  assert.strictEqual(room.freeSeats(), 8, '空出 8 个参与位');
+  // 8 个玩家全部进来参与
+  for (let i = 1; i <= 8; i++) {
+    const p2 = room.addPlayer('P' + i);
+    assert.ok(Number.isInteger(p2.seat), '参与者应有座位');
+  }
+  assert.strictEqual(room.activePlayers().length, 8);
+  assert.strictEqual(room.players.size, 9, '8 玩家 + 观战房主 = 9 人');
+  assert.strictEqual(room.freeSeats(), 0);
+  // 第 9 个参与被拒，但观战可以
+  assert.throws(() => room.addPlayer('P9'), /参与位已满/);
+  const w = room.addPlayer('观战者', { sitOut: true });
+  assert.strictEqual(w.seat, null);
+  assert.strictEqual(room.players.size, 10);
+  // 房间总人数上限
+  assert.throws(() => room.addPlayer('超员', { sitOut: true }), /房间总人数已满/);
+});
+
+test('房主可主动转让房主给指定的人；不能转给自己/人机', () => {
+  const room = newRoom(3, QUIET);
+  const host = room.hostId;
+  const [other1, other2] = room.order.filter((id) => id !== host);
+  // 转给 other2
+  const name = room.transferHost(host, other2);
+  assert.strictEqual(room.hostId, other2);
+  assert.ok(name, '返回被转让者的名字');
+  // 新房东可以再转让
+  room.transferHost(other2, other1);
+  assert.strictEqual(room.hostId, other1);
+  // 原房主已不是房主，不能再转让
+  assert.throws(() => room.transferHost(host, other2), /只有房主/);
+  // 不能转给自己
+  assert.throws(() => room.transferHost(other1, other1), /不能转给自己/);
+  // 不能转给人机
+  const bot = room.addBot();
+  assert.throws(() => room.transferHost(other1, bot.id), /人机/);
+});
+
+test('房主离开：无指定则房间无房主，任一真人可接管', () => {
+  const room = newRoom(3, QUIET);
+  const host = room.hostId;
+  const others = room.order.filter((id) => id !== host);
+  room.removePlayer(host);
+  assert.strictEqual(room.hostId, null, '不自动转交');
+  // 无房主时谁都能接管
+  room.claimHost(others[1]);
+  assert.strictEqual(room.hostId, others[1]);
+  // 已有房主时不能再接管
+  assert.throws(() => room.claimHost(others[0]), /已经有房主/);
+  // 人机不能当房主
+  const bot = room.addBot();
+  assert.throws(() => room.claimHost(bot.id), /人机/);
+});
+
+test('房主离开前指定接班人：离开时按指定移交', () => {
+  const room = newRoom(3, QUIET);
+  const host = room.hostId;
+  const others = room.order.filter((id) => id !== host);
+  room.setHostHeir(host, others[1]);
+  assert.strictEqual(room.hostHeir, others[1]);
+  room.removePlayer(host);
+  assert.strictEqual(room.hostId, others[1], '按指定移交');
+  assert.strictEqual(room.hostHeir, null, '移交后清空接班人');
+  // 指定的接班人已离开则变成无房主
+  const room2 = newRoom(3, QUIET);
+  const h2 = room2.hostId;
+  const o2 = room2.order.filter((id) => id !== h2);
+  room2.setHostHeir(h2, o2[1]);
+  room2.removePlayer(o2[1]);
+  room2.removePlayer(h2);
+  assert.strictEqual(room2.hostId, null, '接班人已离开则不转交');
+});
+
