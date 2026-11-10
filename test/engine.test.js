@@ -1702,7 +1702,9 @@ test('加入申请：房主审批后才进房间，拒绝则进不去，过期�
   // 房主同意 → 进入 players
   const p = room.approveJoin(req.id, a);
   assert.strictEqual(room.players.size, 3);
-  assert.strictEqual(room.pendingJoins.get(req.id).status, 'approved');
+  // 审批后申请移出待审批区（释放名额），结果保留在 recentJoins 供查询
+  assert.strictEqual(room.pendingJoins.has(req.id), false, '已批准的申请不占名额');
+  assert.strictEqual(room.recentJoins.get(req.id).status, 'approved');
   const st = room.joinStatus(req.id);
   assert.strictEqual(st.status, 'approved');
   assert.strictEqual(st.playerId, p.id);

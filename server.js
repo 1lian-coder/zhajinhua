@@ -758,6 +758,20 @@ function humansIn(room) {
 }
 
 /** 关闭房间：先通知所有 SSE 连接（前端会退回首页），再删除房间 */
+/** 通知被踢玩家：发送 closed 事件并断开连接 */
+function kickNotify(playerId, hostName) {
+  for (const [roomKey, byPlayer] of streams) {
+    const set = byPlayer.get(playerId);
+    if (!set) continue;
+    for (const res of set) {
+      try {
+        res.write('event: closed\ndata: ' + JSON.stringify({ reason: '房主把你移出了房间' }) + '\n\n');
+        res.end();
+      } catch (e) { /* ignore */ }
+    }
+    byPlayer.delete(playerId);
+  }
+}
 function closeRoom(room, reason) {
   const byPlayer = streams.get(room.id);
   if (byPlayer) {
@@ -1243,13 +1257,44 @@ const api = {
 
   async start(body) {
     const { room, player } = authPlayer(body);
-    if (room.phase === 'lobby') room.startHand(player.id);
-    else if (room.phase === 'showdown') room.nextHand(player.id);
-    else throw new Error('本局还没结束');
-    warmBetVoice(room);
+    if (room.phase === 'lobby') {
+      // 大厅阶段：全员准备后进入发牌倒计时（给观战的人切回参与的时间）
+      const at = room.requestStart(player.id);
+      warmBetVoice(room);
+      markDirty();
+      broadcast(room);
+      return { ok: true, startAt: at, countdown: room.config.startCountdown || 0 };
+    }
+    if (room.phase === 'showdown') {
+      room.nextHand(player.id);
+      warmBetVoice(room);
+      markDirty();
+      broadcast(room);
+      return { ok: true, startAt: 0 };
+    }
+    throw new Error('本局还没结束');
+  },
+
+  /** 取消开局倒计时 */
+  async cancelStart(body) {
+    const { room, player } = authPlayer(body);
+    room.cancelStart(player.id);
     markDirty();
     broadcast(room);
     return { ok: true };
+  },
+
+  /** 房主踢人（大厅/结算阶段） */
+  async kick(body) {
+    const { room, player } = authPlayer(body);
+    const name = room.kickPlayer(body.target, player.id);
+    markDirty();
+    broadcast(room);
+    // 通知被踢的人：关闭其连接
+    try {
+      kickNotify(String(body.target || ""), name);
+    } catch (e) { /* ignore */ }
+    return { ok: true, name };
   },
 
   async leave(body) {

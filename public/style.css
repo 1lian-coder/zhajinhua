@@ -3884,3 +3884,35 @@ input:focus {
   background: rgba(0, 0, 0, .3);
   color: var(--dim, #6f6688);
 }
+
+/* ==================== 开局倒计时 ==================== */
+
+.start-countdown {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(242, 208, 137, .18), rgba(242, 208, 137, .06));
+  border: 1px solid rgba(242, 208, 137, .5);
+  box-shadow: 0 0 18px rgba(242, 208, 137, .22);
+}
+
+.start-countdown .sc-num {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--gold-bright, #ffe9b0);
+  text-shadow: 0 0 14px rgba(255, 207, 107, .6);
+  min-width: 46px;
+  text-align: center;
+}
+
+.start-countdown .sc-text {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--gold, #f2d089);
+}
+
+#pd-kick { color: #ff9d92; border-color: rgba(255, 128, 114, .5); }

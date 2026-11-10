@@ -59,6 +59,10 @@ const post = (p, b) => req('POST', p, b);
  * 返回正式会话 { roomId, playerId, token, name }
  */
 async function hostReady(host) {
+  // 测试里把开局倒计时设为 0，避免每次等 10 秒
+  const cur = (await get(`/api/state?roomId=${host.roomId}&playerId=${host.playerId}&token=${host.token}`)) || {};
+  const cfg = Object.assign({}, cur.config || {}, { startCountdown: 0 });
+  await post('/api/config', { ...host, config: cfg });
   await post('/api/ready', { ...host, ready: true });
 }
 

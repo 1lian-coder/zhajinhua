@@ -432,7 +432,12 @@ async function main() {
 
   await sleep(500);
 
-  // ---- 准备（所有人就绪后才能开局）----
+  // ---- 准备（所有人就绪后才能开局）；测试里倒计时设为 0 ----
+  {
+    const cfgState = await getJSON(`/api/state?roomId=${roomId}&playerId=${hostSession.playerId}&token=${hostSession.token}`);
+    const cfg = Object.assign({}, cfgState.config || {}, { startCountdown: 0 });
+    await post('/api/config', { ...hostSession, config: cfg });
+  }
   await post('/api/ready', { ...hostSession, ready: true });
   await sleep(600);
 

@@ -39,6 +39,7 @@ var AVATARS = [
     { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
     { key: 'requireApproval', label: '新人进房需房主同意', type: 'bool', def: true },
+    { key: 'startCountdown', label: '开局倒计时（秒，0=立即发牌）', def: 10, min: 0, max: 30, step: 1 },
     { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
     { key: 'special235', label: '235 通杀', type: 'bool', def: false },
     { key: 'autoNext', label: '自动开下一局', type: 'bool', def: false },
@@ -1819,10 +1820,41 @@ var AVATARS = [
 
     if (isSelf) {
       html += '<button class="btn btn-ghost" id="pd-avatar" type="button">换头像</button>';
+    } else {
+      // 房主可以在局间把陌生人踢出房间
+      var amHost = st.hostId === meId();
+      var canKick = amHost && !p.isBot && (st.phase === 'lobby' || st.phase === 'showdown');
+      if (canKick) {
+        html += '<button class="btn btn-ghost btn-small" id="pd-kick" type="button">踢出房间</button>';
+      }
     }
     html += '<div class="modal-btns"><button type="button" class="btn btn-ghost" data-close="1">关闭</button></div>';
 
     var root = showModal(html, { title: isSelf ? '我的信息' : '玩家信息' });
+    var kickBtn = root.querySelector('#pd-kick');
+    if (kickBtn) {
+      kickBtn.addEventListener('click', function () {
+        closeModal();
+        confirmDialog({
+          title: '踢出房间',
+          message: '把「' + p.name + '」移出房间？对方会被断开连接，需要重新申请加入。',
+          okText: '踢出',
+          danger: true
+        }).then(function (ok) {
+          if (!ok) return;
+          api('/api/kick', {
+            roomId: session.roomId,
+            playerId: session.playerId,
+            token: session.token,
+            target: pid
+          }).then(function (res) {
+            if (!res || !res.ok) toast((res && res.error) || '踢人失败', 'err');
+            else toast('已把 ' + (res.name || '') + ' 移出房间', 'ok');
+          });
+        });
+      });
+    }
+
     var avatarBtn = root.querySelector('#pd-avatar');
     if (avatarBtn) {
       avatarBtn.addEventListener('click', function () {
@@ -4391,6 +4423,16 @@ var AVATARS = [
         var waiters = st.readyWaiters || [];
         var allReady = !!st.allReady && enough;
         var myReady = !!st.myReady;
+        // 开局倒计时中：任何人可以取消或切参与/观战
+        if (st.startAt) {
+          primary.disabled = false;
+          primary.textContent = isHost ? '取消开局' : '倒计时中…';
+          primary.disabled = !isHost;
+          tipText = '倒计时结束自动发牌 · 现在是观战的话可以点「参与」加入';
+          $('turn-text').textContent = tipText;
+          updateActionButtons(st);
+          return;
+        }
         if (!enough) {
           primary.disabled = true;
           primary.textContent = '等待玩家（' + n + '/2）';
@@ -4439,6 +4481,7 @@ var AVATARS = [
     var st = state;
     if (st.phase === 'showdown' && st.nextHandAt) updateAutoNextText();
     if (st.phase === 'showdown' && st.nextRoundAt) updateNextRoundCount();
+    if (st.phase === 'lobby' && st.startAt) updateStartCountdown();
     var rem = remainingMs();
     var countEl = $('turn-count');
     var tip = $('turn-text');
@@ -4920,18 +4963,46 @@ var AVATARS = [
   function doUnready() {
     doReady(false);
   }
+  /** 房主取消开局倒计时 */
+  function doCancelStart() {
+    if (!session || busy) return;
+    busy = true;
+    api('/api/cancelStart', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) toast((res && res.error) || '取消失败', 'err');
+      else toast('已取消开局', 'ok');
+    });
+  }
+
+  /** 开局倒计时文案 */
+  function updateStartCountdown() {
+    if (!state || !state.startAt) return;
+    var left = Math.max(0, Math.round((state.startAt - state.serverNow) / 1000 - (Date.now() - clock.localAt) / 1000));
+    var tip = document.getElementById('turn-text');
+    if (tip) tip.textContent = left > 0 ? (left + ' 秒后自动发牌 · 观战可点「参与」') : '正在发牌…';
+  }
+
   function doStart() {
     if (!session || state === null) return;
-    // 大厅阶段：非房主点「准备」，房主点「开始游戏」
+    // 大厅阶段：非房主点「准备」，房主点「开始游戏」（进阶为倒计时/取消）
     if (state.phase === 'lobby') {
       var isHost = state.hostId === meId();
+      // 倒计时中：只有房主能取消
+      if (state.startAt) {
+        if (isHost) doCancelStart();
+        else toast('房主正在准备发牌，稍等一下', 'ok');
+        return;
+      }
       if (!isHost) {
         if (state.myReady) return; // 已经准备了，按钮是禁用的
         doReady(true);
         return;
       }
       if (!state.allReady) {
-        // 房主也需要自己准备：自动帮房主就绪并提示还缺谁
         var waiters = state.readyWaiters || [];
         toast('还有 ' + waiters.length + ' 人没准备：' + waiters.map(function (x) { return x.name; }).join('、'), 'err');
         return;
