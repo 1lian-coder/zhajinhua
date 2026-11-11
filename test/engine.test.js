@@ -1954,3 +1954,75 @@ test('房主不在时别人接管了，原房主回来不再自动抢回房主',
   assert.strictEqual(room.hostId, other, '已有人接管，原房主回来只是普通玩家');
 });
 
+
+
+test('第二轮开始时所有人积分清零，战绩也重新统计', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 40, sessionHands: 1 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  // 造一局结果：a 赢
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  forceCards(room, c, [card('C', 9), card('C', 2), card('C', 3)]);
+  let g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  // 这一局打完后，积分有正有负
+  const netsBefore = [...room.players.values()].map((p2) => p2.net);
+  assert.ok(netsBefore.some((n) => n !== 0), '第一轮结束后应有人积分不为 0');
+  const statsBefore = room.stats[a] ? room.stats[a].wins : 0;
+  assert.ok(statsBefore > 0, '赢家应有胜场记录');
+  // 手动进入第二轮
+  room.startNextRound(true);
+  // 所有人的积分都归零
+  for (const p2 of room.players.values()) {
+    assert.strictEqual(p2.net, 0, '第二轮开始时积分必须清零：' + p2.name);
+  }
+  // 战绩也重置
+  for (const id of Object.keys(room.stats)) {
+    assert.strictEqual(room.stats[id].wins, 0, '战绩胜场清零');
+    assert.strictEqual(room.stats[id].hands, 0, '战绩局数清零');
+  }
+  // 轮次号递增、结果清空
+  assert.strictEqual(room.roundNo, 2);
+  assert.strictEqual(room.lastResult, null, '上一轮结果清空');
+  assert.deepStrictEqual(room.roundNet, {}, '本轮增量清零');
+});
+
+test('第二轮积分重新累计（从 0 开始算）', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 40, sessionHands: 1 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  let g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  const netAfterRound1 = room.players.get(a).net;
+  assert.ok(netAfterRound1 > 0);
+  room.startNextRound(true);
+  assert.strictEqual(room.players.get(a).net, 0, '清零后从 0 开始');
+  // 第二轮再打一局，积分在这局基础上累加
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  const netRound2 = room.players.get(a).net;
+  assert.ok(netRound2 > 0, '第二轮重新累计（不叠加第一轮）');
+  assert.ok(netRound2 < netAfterRound1 * 5, '第二轮积分不应把第一轮的也算进去');
+});
+
