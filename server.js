@@ -731,6 +731,7 @@ function unregisterStream(roomId, pid, res) {
     const stillOpen = streams.get(roomId) && streams.get(roomId).get(pid);
     if (p && !stillOpen) {
       p.connected = false;
+      p.offlineSince = Date.now();
       p.lastSeen = Date.now();
       broadcast(room);
     } else if (!p) {
@@ -1015,7 +1016,7 @@ const api = {
         );
       }
     }
-    const req = room.requestJoin(body.name, { avatar: body.avatar });
+    const req = room.requestJoin(body.name, { avatar: body.avatar, deviceKey: body.deviceKey });
     markDirty();
     broadcast(room);
     return { ok: true, pending: true, roomId: room.id, joinId: req.id, token: req.token, name: req.name };
@@ -1123,6 +1124,15 @@ const api = {
     return { ok: true };
   },
 
+  /** 每局结束后点「准备下一局」 */
+  async handReady(body) {
+    const { room, player } = authPlayer(body);
+    room.setHandReady(player.id, body.ready !== false);
+    markDirty();
+    broadcast(room);
+    return { ok: true, state: room.handReadyState() };
+  },
+
   /** 准备/取消准备（大厅阶段；全员就绪房主才能开局） */
   async ready(body) {
     const { room, player } = authPlayer(body);
@@ -1167,6 +1177,8 @@ const api = {
     const inRoom = room.auth(pid, token);
     if (inRoom) {
       inRoom.connected = true;
+    inRoom.offlineSince = 0;
+      inRoom.offlineSince = 0;
       broadcast(room);
       return { ok: true, roomId: room.id, playerId: inRoom.id, token: inRoom.token, revived: false };
     }

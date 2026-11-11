@@ -107,7 +107,7 @@ async function startServer() {
       ...process.env,
       PORT: String(PORT),
       HOST: '127.0.0.1',
-      ZJH_MAX_ROOMS: '12', // 压低房间上限，方便测试"房间已满"（限频先于上限触发）
+      ZJH_MAX_ROOMS: '16', // 压低房间上限，方便测试"房间已满"（限频先于上限触发）
       ZJH_KEEP_ROOM_MS: '0' // 测试里不保留空房间，避免房间堆积
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -465,6 +465,9 @@ async function main() {
     await post('/api/setRoomPin', { ...pr, password: '' });
     const afterClear = await joinApproved(pr, '清除后加入');
     if (!afterClear.playerId) throw new Error('取消密码后仍进不去');
+    // 把这次测试额外加入的人清掉，别占着房间
+    await post('/api/leave', afterClear).catch(() => {});
+    await post('/api/leave', goodPw).catch(() => {});
 
     console.log('✓ 房间密码：无密码/错密码被拒（code=ROOM_PASSWORD_REQUIRED），正确密码可进，明文不泄露');
 
@@ -476,9 +479,9 @@ async function main() {
   // 1w) 自动连开：开启后结算到点自动开下一局
   {
     const anRoom = await post('/api/create', {
-      name: '自动连开房主',
+      name: '准备闸门房主',
       pin: '2468',
-      config: { ante: 10, initialChips: 1000, baseStake: 10, maxStake: 100, maxPot: 60, seeMultiplier: 2, turnSeconds: 0, autoNext: true, autoNextSeconds: 3 }
+      config: { ante: 10, initialChips: 1000, baseStake: 10, maxStake: 100, maxPot: 60, seeMultiplier: 2, turnSeconds: 0, handRevealStay: 0, handReadyTimeout: 5 }
     });
     if (!anRoom.ok) throw new Error('建房失败: ' + anRoom.error);
     const ar = { roomId: anRoom.roomId, playerId: anRoom.playerId, token: anRoom.token };
@@ -500,22 +503,26 @@ async function main() {
         await sleep(700); // 等人机
       }
     }
-    if (!settled) throw new Error('自动连开房的第一局没打完');
+    if (!settled) throw new Error('准备闸门房的第一局没打完');
 
     const afterFirst = await getState(ar);
     if (afterFirst.phase !== 'showdown') throw new Error('应处于结算阶段');
-    if (!afterFirst.nextHandAt) throw new Error('开启自动连开后应排定 nextHandAt');
+    const gate = afterFirst.handReady || {};
+    if (!gate.deadline) throw new Error('每局结束应排定准备闸门 handReady.deadline');
+    if (!(gate.deadline > Date.now())) throw new Error('准备闸门截止时间应在未来');
 
-    // 等它自动开下一局
+    // 点「准备下一局」（人机自动参与）→ 全员准备后立即开下一局
+    const readyRes = await post('/api/handReady', { ...ar, ready: true });
+    if (!readyRes.ok) throw new Error('准备下一局失败: ' + readyRes.error);
     let autoStarted = false;
     const dl = Date.now() + 30000;
     while (Date.now() < dl) {
-      const s = await getState(ar);
-      if (s.phase === 'playing' && s.handNo >= 2) { autoStarted = true; break; }
-      await sleep(400);
+      const s2 = await getState(ar);
+      if (s2.phase === 'playing' && s2.handNo >= 2) { autoStarted = true; break; }
+      await sleep(300);
     }
-    if (!autoStarted) throw new Error('自动连开没有生效（30 秒内没自动开第二局）');
-    console.log('✓ 自动连开生效：第 1 局结算后排定，3 秒后自动开始第 2 局');
+    if (!autoStarted) throw new Error('准备后没有自动开第二局');
+    console.log('✓ 每局结束的准备闸门生效：亮牌停留 → 准备 → 自动开第 2 局');
 
     // 清理自动连开房间，免得占满房间上限
     await post('/api/leave', ar);

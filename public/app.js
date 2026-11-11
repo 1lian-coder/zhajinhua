@@ -162,6 +162,16 @@ var AVATARS = [
     lsSet(SESS_KEY, JSON.stringify(all));
   }
 
+  /** 本机设备标识（用于重复申请幂等，避免重复按报「昵称已被占用」） */
+  var DEVICE_KEY = 'zjh.device.v1';
+  function deviceKey() {
+    var k = lsGet(DEVICE_KEY, '');
+    if (k && k.length >= 8) return k;
+    k = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    lsSet(DEVICE_KEY, k);
+    return k;
+  }
+
   /* --------------------------------------------------------------- 运行状态 */
 
   var state = null;              // 最新 State
@@ -908,7 +918,7 @@ var AVATARS = [
 
   /** 真正发出加入申请 */
   function doRequestJoin(rid, name, password, pinField, btn) {
-    api('/api/requestJoin', { roomId: rid, name: name, password: password, avatar: readAvatar() }).then(function (res) {
+    api('/api/requestJoin', { roomId: rid, name: name, password: password, avatar: readAvatar(), deviceKey: deviceKey() }).then(function (res) {
       busy = false;
       btn.disabled = false;
       if (!res || !res.ok) {
@@ -1744,6 +1754,7 @@ var AVATARS = [
   var lastCompareAt = 0;
   var loanBarSig = '';
   var compareTimer = null;
+  var gateRenderTimer = null; // 亮牌停留结束后自动重绘结算按钮
   var fitTimer = null;
 
   /** 自适应：按屏幕可用高度设置牌桌高度 */
@@ -4532,16 +4543,45 @@ var AVATARS = [
         actions.hidden = true;
         primary.hidden = false;
         var roundOver = !!(st.lastResult && st.lastResult.sessionOver);
-        primary.disabled = busy;
         if (roundOver) {
-          primary.textContent = st.nextRoundAt ? '正在集合下一轮…' : ('开始第 ' + ((st.roundNo || 1) + 1) + ' 轮');
+          // 本轮打满：点「开始第 N 轮」（5 秒宽限等其他人）
           primary.disabled = busy || !!st.nextRoundAt;
+          primary.textContent = st.nextRoundAt ? '正在集合下一轮…' : ('开始第 ' + ((st.roundNo || 1) + 1) + ' 轮');
+          tipText = st.nextRoundAt ? '等待其他玩家，5 秒后自动开始新一轮' : '本轮局数已打完 · 点「开始下一轮」，没点的人本轮先观战';
         } else {
-          primary.textContent = '下一局';
+          // 每局结束：亮牌停留结束后出「准备下一局」
+          var hrs = st.handReady || { total: 0, readyCount: 0, waiters: [], gateAt: 0, deadline: 0 };
+          var nowSrv = (clock.serverNow || Date.now()) + (Date.now() - (clock.localAt || Date.now()));
+          var gateOpen = hrs.gateAt ? nowSrv >= hrs.gateAt : false;
+          if (hrs.gateAt && !gateOpen) {
+            // 亮牌停留还没结束：到点自动重绘，让「准备下一局」按时出现
+            if (gateRenderTimer) clearTimeout(gateRenderTimer);
+            gateRenderTimer = setTimeout(function () {
+              gateRenderTimer = null;
+              if (state && state.phase === 'showdown') renderBottom(state);
+            }, Math.max(30, hrs.gateAt - nowSrv + 60));
+          }
+          var iReady = !st.mySitOut && !(hrs.waiters || []).some(function (w) { return w.id === meId(); });
+          if (!gateOpen) {
+            primary.disabled = true;
+            primary.textContent = '正在亮牌…';
+            tipText = '本局结束 · 稍等片刻出「准备下一局」';
+          } else if (iReady) {
+            primary.disabled = true;
+            primary.textContent = '已准备 · 等待其他人';
+            tipText = (hrs.waiters || []).length
+              ? ('已准备 · 还差 ' + hrs.waiters.length + ' 人：' + hrs.waiters.map(function (w) { return w.name; }).join('、'))
+              : '全员已准备，马上开始下一局';
+          } else if (st.mySitOut) {
+            primary.disabled = busy;
+            primary.textContent = '准备下一局（重新参与）';
+            tipText = '本局你在观战 · 点「准备下一局」回到牌局';
+          } else {
+            primary.disabled = busy;
+            primary.textContent = '准备下一局';
+            tipText = (hrs.readyCount || 0) + '/' + (hrs.total || 0) + ' 已准备 · ' + (hrs.deadline ? Math.max(0, Math.round((hrs.deadline - (clock.serverNow + (Date.now() - clock.localAt))) / 1000)) + ' 秒后自动开始' : '');
+          }
         }
-        tipText = roundOver
-          ? (st.nextRoundAt ? '等待其他玩家，倒计时结束自动开始新一轮' : '本轮局数已打完 · 可以直接开下一轮，局数也能再改')
-          : '本局结束 · 准备下一局';
       } else {
         // 大厅阶段：所有参与者点「准备」，全员就绪后房主才能开局
         actions.hidden = true;
@@ -4585,8 +4625,13 @@ var AVATARS = [
           primary.disabled = true;
           primary.textContent = '等待玩家（' + n + '/2）';
           tipText = '至少 2 人才能开局 · 当前 ' + n + ' 人';
+        } else if (isHost && !myReady) {
+          // 房主自己还没准备：也能点「准备」（以前这里卡死）
+          primary.disabled = busy;
+          primary.textContent = '准备';
+          tipText = '点「准备」，等所有人就绪后你就能开局了 · ' + n + ' 人在房间';
         } else if (isHost) {
-          // 房主：全员就绪才能点「开始游戏」
+          // 房主已准备：全员就绪 → 开始游戏；还有人没准备 → 只能等
           primary.disabled = busy || !allReady;
           primary.textContent = allReady ? '开始游戏' : ('等待准备（' + (n - waiters.length) + '/' + n + '）');
           tipText = allReady
@@ -4629,6 +4674,17 @@ var AVATARS = [
     var st = state;
     if (st.phase === 'showdown' && st.nextHandAt) updateAutoNextText();
     if (st.phase === 'showdown' && st.nextRoundAt) updateNextRoundCount();
+    if (st.phase === 'showdown' && st.handReady && st.handReady.deadline) {
+      var nowSrv2 = (clock.serverNow || Date.now()) + (Date.now() - (clock.localAt || Date.now()));
+      var leftSec = Math.max(0, Math.ceil((st.handReady.deadline - nowSrv2) / 1000));
+      var tipEl = $('turn-text');
+      if (tipEl && st.handReady.gateAt && nowSrv2 >= st.handReady.gateAt && !st.mySitOut) {
+        var mineReady = !(st.handReady.waiters || []).some(function (w) { return w.id === meId(); });
+        if (!mineReady) {
+          tipEl.textContent = (st.handReady.readyCount || 0) + '/' + (st.handReady.total || 0) + ' 已准备 · ' + leftSec + ' 秒后自动开始';
+        }
+      }
+    }
     if (st.phase === 'lobby' && st.startAt) updateStartCountdown();
     var rem = remainingMs();
     var countEl = $('turn-count');
@@ -5111,6 +5167,22 @@ var AVATARS = [
   function doUnready() {
     doReady(false);
   }
+  /** 每局结束后点「准备下一局」 */
+  function doHandReady() {
+    if (!session || busy) return;
+    busy = true;
+    api('/api/handReady', {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      token: session.token,
+      ready: true
+    }).then(function (res) {
+      busy = false;
+      if (!res || !res.ok) toast((res && res.error) || '准备失败', 'err');
+      else if (state) renderBottom(state);
+    });
+  }
+
   /** 房间无房主时接管 */
   function doClaimHost() {
     if (!session || busy) return;
@@ -5168,6 +5240,16 @@ var AVATARS = [
       return;
     }
 
+    // 结算阶段（本轮还没打完）：点按钮 = 准备下一局
+    if (state.phase === 'showdown') {
+      var rdOver = !!(state.lastResult && state.lastResult.sessionOver);
+      if (!rdOver) {
+        doHandReady();
+        return;
+      }
+      // 本轮打满：走原来的「开始第 N 轮」
+    }
+
     // 房间无房主：点底部按钮 = 接管房主
     if (state.hasHost === false) {
       doClaimHost();
@@ -5188,9 +5270,14 @@ var AVATARS = [
         doReady(true);
         return;
       }
+      if (!state.myReady) {
+        // 房主先把自己准备好
+        doReady(true);
+        return;
+      }
       if (!state.allReady) {
-        var waiters = state.readyWaiters || [];
-        toast('还有 ' + waiters.length + ' 人没准备：' + waiters.map(function (x) { return x.name; }).join('、'), 'err');
+        var waiters2 = state.readyWaiters || [];
+        toast('还有 ' + waiters2.length + ' 人没准备：' + waiters2.map(function (x) { return x.name; }).join('、'), 'err');
         return;
       }
     }

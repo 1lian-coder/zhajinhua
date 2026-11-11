@@ -541,49 +541,7 @@ test('弃牌获胜：赢家可自行决定是否公布牌，其他人不能代�
   assert.throws(() => room2.revealWin(room2.order[0]), /不是弃牌获胜/);
 });
 
-test('每轮局数：打满后停止自动连开，且本房间不能再开下一局（必须新开房间）', () => {
-  const room = newRoom(2, {
-    ...QUIET,
-    turnSeconds: 0,
-    maxPot: 60,
-    autoNext: true,
-    autoNextSeconds: 30,
-    sessionHands: 2
-  });
-  const [a, b] = room.order;
 
-  const playOne = () => {
-    room.startHand(a);
-    forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
-    forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
-    room.turnId = a;
-    room.act(a, 'compare', { target: b });
-  };
-
-  playOne(); // 第 1 局
-  assert.strictEqual(room.lastResult.sessionOver, undefined, '没打满不该标记结束');
-  assert.ok(room.nextHandAt > 0, '未打满应排自动连开');
-
-  playOne(); // 第 2 局
-  assert.strictEqual(room.handNo, 2);
-  assert.strictEqual(room.lastResult.sessionOver, true, '打满 2 局应标记本轮结束');
-  assert.strictEqual(room.nextHandAt, 0, '本轮结束不应自动连开');
-
-  // 本轮打满后不再要求新开房间：点「下一轮」沿用原设置直接续上
-  assert.strictEqual(room.roundNo, 1);
-  room.requestNextRound(a);
-  // 还有 b 没点 → 进入 30 秒集合等待
-  assert.ok(room.nextRoundAt > 0, '有人没点时应进入集合等待');
-  room.requestNextRound(b); // b 也点了
-  assert.strictEqual(room.roundWaiters().length, 0, '都点了就没人要等');
-  room.tick(room.nextRoundAt + 1); // 倒计时到点自动开始新一轮
-  assert.strictEqual(room.roundNo, 2, '进入第 2 轮');
-  assert.strictEqual(room.handNo, 0, '新一轮局数归零');
-  assert.strictEqual(room.phase, 'lobby', '新一轮回到大厅，房主可改设置');
-  room.startHand(a);
-  assert.strictEqual(room.phase, 'playing');
-  assert.strictEqual(room.handNo, 1, '新一轮第 1 局');
-});
 
 test('看牌不是回合动作：没轮到自己也能看（HTTP /api/look 与 action=look 行为一致）', () => {
   const room = newRoom(3, QUIET);
@@ -1127,68 +1085,9 @@ test('抢庄：人机在抢庄阶段自动决策，整局可打完', () => {
   assert.strictEqual(room.phase, 'showdown');
 });
 
-test('自动连开：结算后按配置排定下一局，到点自动开局；可取消', () => {
-  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: true, autoNextSeconds: 3 });
-  const [a, b] = room.order;
-  room.startHand(a);
-  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
-  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
-  room.turnId = a;
-  room.act(a, 'compare', { target: b });
 
-  assert.strictEqual(room.phase, 'showdown');
-  assert.ok(room.nextHandAt > 0, '开启自动连开后应排定下一局时刻');
-  const delay = room.nextHandAt - Date.now();
-  assert.ok(delay > 2500 && delay <= 3500, `等待时长应接近 3 秒，实际 ${delay}`);
 
-  // 未到点不自动开
-  assert.strictEqual(room.tick(Date.now()), false, '未到点不应开局');
-  assert.strictEqual(room.phase, 'showdown');
 
-  // 到点自动开局（用伪造的未来时间）
-  const startedAt = room.nextHandAt + 100;
-  assert.strictEqual(room.tick(startedAt), true, '到点应自动开局');
-  assert.strictEqual(room.phase, 'playing');
-  assert.strictEqual(room.handNo, 2, '应进入第 2 局');
-  assert.strictEqual(room.nextHandAt, 0, '开局后清空计划');
-
-  // 关闭自动连开则不排定
-  const room2 = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: false });
-  const [x, y] = room2.order;
-  room2.startHand(x);
-  forceCards(room2, x, [card('S', 14), card('H', 14), card('D', 14)]);
-  forceCards(room2, y, [card('S', 5), card('H', 6), card('D', 7)]);
-  room2.turnId = x;
-  room2.act(x, 'compare', { target: y });
-  assert.strictEqual(room2.nextHandAt, 0, '未开启自动连开不应排定');
-});
-
-test('自动连开：可手动取消；手动「下一局」也会清空计划', () => {
-  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 60, autoNext: true, autoNextSeconds: 30 });
-  const [a, b] = room.order;
-  room.startHand(a);
-  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
-  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
-  room.turnId = a;
-  room.act(a, 'compare', { target: b });
-  assert.ok(room.nextHandAt > 0);
-
-  // 任何玩家都能取消
-  assert.strictEqual(room.pauseAutoNext(b), true);
-  assert.strictEqual(room.nextHandAt, 0);
-  // 取消后到点也不会自动开
-  assert.strictEqual(room.tick(Date.now() + 60000), false);
-  assert.strictEqual(room.phase, 'showdown');
-
-  // 手动开下一局
-  room.nextHand(a);
-  assert.strictEqual(room.phase, 'playing');
-  assert.strictEqual(room.nextHandAt, 0);
-
-  // 非房间成员不能取消
-  assert.throws(() => room2Pause(), /玩家不存在/);
-  function room2Pause() { room.pauseAutoNext('ghost'); }
-});
 
 // ------------------------------------------------------------ 房间密码
 
@@ -2024,5 +1923,112 @@ test('第二轮积分重新累计（从 0 开始算）', () => {
   const netRound2 = room.players.get(a).net;
   assert.ok(netRound2 > 0, '第二轮重新累计（不叠加第一轮）');
   assert.ok(netRound2 < netAfterRound1 * 5, '第二轮积分不应把第一轮的也算进去');
+});
+
+
+
+test('每局结束：准备闸门——全员准备后立即开下一局', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 40, handRevealStay: 0, handReadyTimeout: 10 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  let g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  assert.strictEqual(room.phase, 'showdown');
+  assert.ok(room.handGateDeadline > 0, '应排定准备闸门');
+  // 两个人都准备 → 立即开下一局
+  room.setHandReady(a, true);
+  assert.strictEqual(room.handReadyState().readyCount, 1);
+  // 第二个人准备 → 全员就绪，立即开局（不用等 tick）
+  room.setHandReady(b, true);
+  assert.notStrictEqual(room.phase, 'showdown', '全员准备应立即开下一局');
+  assert.strictEqual(room.handNo, 2);
+});
+
+test('每局结束：准备超时自动开局，没准备的人本局观战', () => {
+  const room = newRoom(3, { ...QUIET, turnSeconds: 0, maxPot: 40, handRevealStay: 0, handReadyTimeout: 5 });
+  const [a, b, c] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  forceCards(room, c, [card('C', 9), card('C', 2), card('C', 3)]);
+  let g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  assert.strictEqual(room.phase, 'showdown');
+  // 只有 a、b 准备，c 不准备；等倒计时到
+  room.setHandReady(a, true);
+  room.setHandReady(b, true);
+  assert.strictEqual(room.handReadyState().waiters.length, 1, 'c 还没准备');
+  const moved = room.tick(room.handGateDeadline + 1000);
+  assert.strictEqual(moved, true, '超时应自动开局');
+  assert.notStrictEqual(room.phase, 'showdown');
+  // c 本局观战
+  const pc = room.players.get(c);
+  assert.strictEqual(pc.sitOut, true, '没准备的人本局观战');
+  assert.strictEqual(pc.inHand, false);
+  // a、b 参与
+  assert.strictEqual(room.players.get(a).inHand, true);
+  assert.strictEqual(room.players.get(b).inHand, true);
+});
+
+test('每局结束：亮牌停留期间不能准备，停留结束后才能准备', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 40, handRevealStay: 3, handReadyTimeout: 10 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  let g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  const gateAt = room.handGateAt;
+  const nowAfterSettle = Date.now();
+  const stayMs = gateAt - nowAfterSettle;
+  assert.ok(stayMs > 2000 && stayMs <= 3100, '亮牌停留约 3 秒，实际 ' + stayMs);
+  // 全员准备但还没到闸门开启时间 → 不该开
+  room.setHandReady(a, true);
+  room.setHandReady(b, true);
+  const t1 = room.tick(gateAt - 500);
+  assert.strictEqual(room.phase, 'showdown', '没到闸门时间不开局');
+  // 到闸门时间 → 开
+  const t2 = room.tick(gateAt + 50);
+  assert.notStrictEqual(room.phase, 'showdown');
+});
+
+test('离线玩家在准备阶段会被自动移出房间', () => {
+  const room = newRoom(2, { ...QUIET, turnSeconds: 0, maxPot: 40, handRevealStay: 0, handReadyTimeout: 20 });
+  const [a, b] = room.order;
+  room.startHand(a);
+  forceCards(room, a, [card('S', 14), card('H', 14), card('D', 14)]);
+  forceCards(room, b, [card('S', 5), card('H', 6), card('D', 7)]);
+  let g = 0;
+  while (room.phase === 'playing' && g++ < 100) {
+    const opts = room.optionsFor(room.turnId);
+    const call = opts.find((o) => o.type === 'call');
+    if (call) room.act(room.turnId, 'call');
+    else room.act(room.turnId, 'fold');
+  }
+  // b 掉线 30 秒
+  const pb = room.players.get(b);
+  pb.connected = false;
+  pb.offlineSince = Date.now() - 30000;
+  room.tick(Date.now() + 100);
+  assert.strictEqual(room.players.has(b), false, '离线超时的人应被移出');
+  // a 还在
+  assert.strictEqual(room.players.has(a), true);
 });
 
