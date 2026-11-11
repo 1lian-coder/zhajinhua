@@ -860,8 +860,6 @@ var AVATARS = [
 
   function doJoin() {
     if (busy) return;
-    var name = requireNickname();
-    if (!name) return;
     var rid = digits($('join-room').value).slice(0, 6);
     $('join-room').value = rid;
     if (rid.length !== 6) {
@@ -876,6 +874,40 @@ var AVATARS = [
     busy = true;
     var btn = $('btn-join');
     btn.disabled = true;
+    // 本机存过这个房间的身份：直接恢复，连昵称都不用填
+    var oldSess = getSession(rid);
+    if (oldSess) {
+      api('/api/rejoin', { roomId: rid, playerId: oldSess.playerId, token: oldSess.token }).then(function (rv) {
+        if (rv && rv.ok) {
+          busy = false;
+          btn.disabled = false;
+          toast(rv.revived ? '欢迎回来，已恢复原来的身份' : '已回到房间', 'ok');
+          enterRoom({ roomId: rv.roomId, playerId: rv.playerId, token: rv.token, name: oldSess.name || '' });
+          return;
+        }
+        // 恢复不了（房间没了/被踢）：走正常申请
+        proceedApply(rid, password, pinField, btn);
+      }, function () {
+        proceedApply(rid, password, pinField, btn);
+      });
+      return;
+    }
+    proceedApply(rid, password, pinField, btn);
+  }
+
+  /** 没有旧身份：要求昵称后发出加入申请 */
+  function proceedApply(rid, password, pinField, btn) {
+    var name = requireNickname();
+    if (!name) {
+      busy = false;
+      if (btn) btn.disabled = false;
+      return;
+    }
+    doRequestJoin(rid, name, password, pinField, btn);
+  }
+
+  /** 真正发出加入申请 */
+  function doRequestJoin(rid, name, password, pinField, btn) {
     api('/api/requestJoin', { roomId: rid, name: name, password: password, avatar: readAvatar() }).then(function (res) {
       busy = false;
       btn.disabled = false;
@@ -5238,7 +5270,7 @@ var AVATARS = [
       if (!ok) return;
       var s = session;
       closeStream();
-      if (s) dropSession(s.roomId);
+      // 不清 session：保留原 token，退出后还能凭它直接回到这个房间（房主回来还是房主）
       session = null;
       state = null;
       busy = false;
@@ -5248,7 +5280,7 @@ var AVATARS = [
           playerId: s.playerId,
           token: s.token
         }).then(function () {
-          showHome({ roomId: s.roomId, toast: '已退出房间 · 房号已记住，点「观战」可直接回去看', toastType: 'ok' });
+          showHome({ roomId: s.roomId, toast: '已退出房间 · 随时可以点「参与」直接回来（不用再审批）', toastType: 'ok' });
         }, function () {
           showHome({ roomId: s.roomId, toast: '已退出房间 · 房号已记住，点「观战」可直接回去看', toastType: 'ok' });
         });

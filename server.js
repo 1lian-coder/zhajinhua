@@ -36,7 +36,11 @@ const MAX_BODY = 64 * 1024;
 const SSE_PING_MS = 20000;
 const TICK_MS = 1000;
 const IDLE_ROOM_MS = 2 * 60 * 60 * 1000; // 有连接但长时间无操作的兜底
-const NOBODY_GRACE_MS = Number(process.env.ZJH_IDLE_CLOSE_MS) || 10 * 60 * 1000; // 页面上没人后多久解散房间（10 分钟，避免切后台丢房间）
+const NOBODY_GRACE_MS = Number(process.env.ZJH_IDLE_CLOSE_MS) || 10 * 60 * 1000;
+// 房间空了之后，为「退出后可能回来」的人保留多久（0 = 立即关闭；测试里设 0）
+const KEEP_ROOM_MS = process.env.ZJH_KEEP_ROOM_MS === '0'
+  ? 0
+  : (Number(process.env.ZJH_KEEP_ROOM_MS) || 10 * 60 * 1000); // 页面上没人后多久解散房间（10 分钟，避免切后台丢房间）
 const GC_INTERVAL_MS = Number(process.env.ZJH_GC_MS) || 10000;
 const SAVE_DEBOUNCE_MS = 2000;
 const RATE_WINDOW_MS = 3000;
@@ -772,6 +776,17 @@ function kickNotify(playerId, hostName) {
     byPlayer.delete(playerId);
   }
 }
+/** 房间里是否还有"退出后可能回来"的成员（有则不要立刻关闭房间） */
+function canRevive(room) {
+  if (!room || !room.leftMembers) return false;
+  if (room.leftMembers.size === 0) return false;
+  const now = Date.now();
+  for (const m of room.leftMembers.values()) {
+    if (KEEP_ROOM_MS > 0 && now - (m.leftAt || 0) < KEEP_ROOM_MS) return true;
+  }
+  return false;
+}
+
 function closeRoom(room, reason) {
   const byPlayer = streams.get(room.id);
   if (byPlayer) {
@@ -1145,10 +1160,22 @@ const api = {
   },
 
   async rejoin(body) {
-    const { room, player } = authPlayer(body);
-    player.connected = true;
+    const room = getRoomOrThrow(body.roomId);
+    const pid = String(body.playerId || "");
+    const token = String(body.token || "");
+    // 还在房间：普通重连
+    const inRoom = room.auth(pid, token);
+    if (inRoom) {
+      inRoom.connected = true;
+      broadcast(room);
+      return { ok: true, roomId: room.id, playerId: inRoom.id, token: inRoom.token, revived: false };
+    }
+    // 退出过的人：凭原 token 直接回来（免审批，房主自动恢复房主）
+    const back = room.reviveMember(pid, token);
+    warmPlayerVoice(back.name);
+    markDirty();
     broadcast(room);
-    return { ok: true, roomId: room.id, playerId: player.id, token: player.token };
+    return { ok: true, roomId: room.id, playerId: back.id, token: back.token, revived: true };
   },
 
   async action(body) {
@@ -1331,8 +1358,15 @@ const api = {
     room.removePlayer(player.id);
     markDirty();
     if (humansIn(room) === 0) {
-      closeRoom(room, '人都退出了');
+      // 还有人可能回来（凭原 token）→ 先留着，宽限期结束再关
+      if (canRevive(room)) {
+        if (!room._emptySince) room._emptySince = Date.now();
+        broadcast(room);
+      } else {
+        closeRoom(room, '人都退出了');
+      }
     } else {
+      room._emptySince = 0;
       broadcast(room);
     }
     return { ok: true };
@@ -1592,11 +1626,21 @@ const gcTimer = setInterval(() => {
   for (const [id, room] of rooms) {
     try {
       room.gcPendingJoins();
-      // 没有真人（只剩人机 / 人都走了）立即关闭
+      room.gcLeftMembers();
+      // 没有真人（只剩人机 / 人都走了）：如果还有人可能回来就保留一段时间
       if (humansIn(room) === 0) {
+        if (canRevive(room)) {
+          if (!room._emptySince) room._emptySince = now;
+          if (now - room._emptySince >= KEEP_ROOM_MS) {
+            closeRoom(room, '没人回来，房间解散');
+            continue;
+          }
+          continue;
+        }
         closeRoom(room, '没有真人，自动关闭');
         continue;
       }
+      room._emptySince = 0;
       // 页面上已经没有人（关掉网页/断线）：等一小会儿就解散
       if (room.hadSSE && liveCount(room) === 0) {
         if (!room._nobodySince) room._nobodySince = now;

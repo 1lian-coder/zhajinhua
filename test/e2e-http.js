@@ -107,7 +107,8 @@ async function startServer() {
       ...process.env,
       PORT: String(PORT),
       HOST: '127.0.0.1',
-      ZJH_MAX_ROOMS: '12' // 压低房间上限，方便测试"房间已满"（限频先于上限触发）
+      ZJH_MAX_ROOMS: '12', // 压低房间上限，方便测试"房间已满"（限频先于上限触发）
+      ZJH_KEEP_ROOM_MS: '0' // 测试里不保留空房间，避免房间堆积
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });

@@ -324,11 +324,15 @@ test('房主退出不自动移交：无指定则无房主，指定接班人则�
   const host = room.hostId;
   const others = room.order.filter((id) => id !== host);
   room.removePlayer(host);
-  assert.strictEqual(room.hostId, null, '不应自动移交给别人');
+  assert.strictEqual(room.hostId, host, '房主身份保留给原房主（不自动给别人）');
+  assert.strictEqual(room.hostLeft, host, '标记房主暂时不在');
   assert.strictEqual(room.players.size, 2);
-  // 任一真人可接管
+  // 房主不在时可接管（原房主回来还能恢复）
   room.claimHost(others[0]);
   assert.strictEqual(room.hostId, others[0], '接管后成为房主');
+  assert.strictEqual(room.hostLeft, null, '接管后清掉标记');
+  // 原房主用原 token 回来，凭 leftMembers 记录能恢复（但房主已被接管）
+  assert.ok(room.leftMembers.has(host), '离场记录保留，能回来');
 
   // B) 房主离开前指定接班人 → 按指定移交
   const room2 = newRoom(3, QUIET);
@@ -1863,16 +1867,17 @@ test('房主可主动转让房主给指定的人；不能转给自己/人机', (
   assert.throws(() => room.transferHost(other1, bot.id), /人机/);
 });
 
-test('房主离开：无指定则房间无房主，任一真人可接管', () => {
+test('房主离开：身份保留给原房主，房主不在时任一真人可接管', () => {
   const room = newRoom(3, QUIET);
   const host = room.hostId;
   const others = room.order.filter((id) => id !== host);
   room.removePlayer(host);
-  assert.strictEqual(room.hostId, null, '不自动转交');
-  // 无房主时谁都能接管
+  assert.strictEqual(room.hostId, host, '房主身份保留（不自动给别人）');
+  assert.strictEqual(room.hostLeft, host);
+  // 房主不在 → 别人可以接管
   room.claimHost(others[1]);
   assert.strictEqual(room.hostId, others[1]);
-  // 已有房主时不能再接管
+  // 已有房主且在房间里 → 不能再接管
   assert.throws(() => room.claimHost(others[0]), /已经有房主/);
   // 人机不能当房主
   const bot = room.addBot();
@@ -1895,6 +1900,57 @@ test('房主离开前指定接班人：离开时按指定移交', () => {
   room2.setHostHeir(h2, o2[1]);
   room2.removePlayer(o2[1]);
   room2.removePlayer(h2);
-  assert.strictEqual(room2.hostId, null, '接班人已离开则不转交');
+  assert.strictEqual(room2.hostId, h2, '接班人已离开 → 房主身份仍保留给原房主');
+  assert.strictEqual(room2.hostLeft, h2, '标记房主不在');
+});
+
+
+
+test('退出后凭原 token 可以回来：保留积分与身份，无需重新审批', () => {
+  const room = newRoom(3, QUIET);
+  const [a, b, c] = room.order;
+  const before = room.players.get(b);
+  before.net = 7; // 造一个积分，验证回来后保留
+  room.removePlayer(b);
+  assert.strictEqual(room.players.has(b), false, '已移出房间');
+  assert.ok(room.leftMembers.has(b), '留了离场记录');
+  // 凭原 token 回来
+  const back = room.reviveMember(b, before.token);
+  assert.strictEqual(back.id, b, '还是原来的 playerId');
+  assert.strictEqual(room.players.get(b).net, 7, '积分保留');
+  assert.ok(Number.isInteger(room.players.get(b).seat), '重新拿到座位');
+  assert.strictEqual(room.leftMembers.has(b), false, '离场记录已用掉');
+  // token 不对回不来
+  const room2 = newRoom(2, QUIET);
+  const [x] = room2.order;
+  const tx = room2.players.get(x).token;
+  room2.removePlayer(x);
+  assert.throws(() => room2.reviveMember(x, 'wrong-token'), /身份验证失败/);
+  // 没记录的人回不来
+  assert.throws(() => room2.reviveMember('p999', 'whatever'), /没有你的记录/);
+});
+
+test('房主退出后回来：自动恢复房主身份', () => {
+  const room = newRoom(3, QUIET);
+  const host = room.hostId;
+  const token = room.players.get(host).token;
+  room.removePlayer(host);
+  assert.strictEqual(room.hostId, host, '身份保留');
+  assert.ok(room.leftMembers.get(host).wasHost, '记录里标记过是房主');
+  const back = room.reviveMember(host, token);
+  assert.strictEqual(room.hostId, host, '回来还是房主');
+  assert.strictEqual(room.hostLeft, null, '清掉「房主不在」标记');
+});
+
+test('房主不在时别人接管了，原房主回来不再自动抢回房主', () => {
+  const room = newRoom(3, QUIET);
+  const host = room.hostId;
+  const token = room.players.get(host).token;
+  const other = room.order.filter((id) => id !== host)[0];
+  room.removePlayer(host);
+  room.claimHost(other);
+  assert.strictEqual(room.hostId, other);
+  room.reviveMember(host, token);
+  assert.strictEqual(room.hostId, other, '已有人接管，原房主回来只是普通玩家');
 });
 
