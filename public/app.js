@@ -36,8 +36,7 @@ var AVATARS = [
     { key: 'dealerBid', label: '抢庄模式', type: 'bool', def: false },
     { key: 'bidSeconds', label: '抢庄秒数', def: 10, min: 3, max: 60, step: 1 },
     { key: 'sessionHands', label: '每轮局数(0=不限)', def: 0, min: 0, max: 200, step: 1 },
-    { key: 'baoziBonus', label: '豹子奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
-    { key: 'shunjinBonus', label: '顺金奖励(每人)', def: 0, min: 0, max: 10000, step: 10 },
+    // 豹子 10 分 / 顺金 5 分已固定，不再提供配置项
     { key: 'requireApproval', label: '新人进房需房主同意', type: 'bool', def: true },
     { key: 'startCountdown', label: '开局倒计时（秒，0=立即发牌）', def: 10, min: 0, max: 30, step: 1 },
     { key: 'showAllAtEnd', label: '每局结束亮出所有牌', type: 'bool', def: true },
@@ -678,6 +677,16 @@ var AVATARS = [
     var sess = rid ? getSession(rid) : latestSession();
     $('resume-box').hidden = !sess;
     if (sess) $('resume-room').textContent = sess.roomId;
+    // 房号已填好时，把「观战」入口也提示出来（退出过房间的人不用手输）
+    var hint = $('join-room-hint');
+    if (hint) {
+      if (rid && rid.length === 6) {
+        hint.hidden = false;
+        hint.textContent = '房号已填好：想打牌点「参与」，只想看牌点「观战」';
+      } else {
+        hint.hidden = true;
+      }
+    }
   }
 
   function showHome(opts) {
@@ -5239,9 +5248,9 @@ var AVATARS = [
           playerId: s.playerId,
           token: s.token
         }).then(function () {
-          showHome({ roomId: '', toast: '已退出房间' });
+          showHome({ roomId: s.roomId, toast: '已退出房间 · 房号已记住，点「观战」可直接回去看', toastType: 'ok' });
         }, function () {
-          showHome({ roomId: '', toast: '已退出房间' });
+          showHome({ roomId: s.roomId, toast: '已退出房间 · 房号已记住，点「观战」可直接回去看', toastType: 'ok' });
         });
       } else {
         showHome({});
